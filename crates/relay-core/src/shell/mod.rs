@@ -84,6 +84,7 @@ fn error_message(error: ShellError) -> &'static [u8] {
         ShellError::Vfs(VfsError::Fs(FsError::AlreadyExists)) => b"already exists",
         ShellError::Vfs(VfsError::Fs(FsError::NotEmpty)) => b"directory not empty",
         ShellError::Vfs(VfsError::Fs(FsError::NoSpace)) => b"no space left",
+        ShellError::Vfs(VfsError::Busy) => b"directory busy",
         ShellError::Unavailable => b"command unavailable",
     }
 }
