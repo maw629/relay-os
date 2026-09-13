@@ -158,11 +158,136 @@ pub(super) fn create_file<D: BlockDevice>(
 
 pub(super) fn create_dir<D: BlockDevice>(
     fs: &mut Ext2<D>,
-    _parent: NodeId,
-    _name: &Name,
+    parent: NodeId,
+    name: &Name,
 ) -> Result<NodeId, Ext2Error> {
     fs.require_writable()?;
-    Err(Ext2Error::UnsupportedFile)
+    let parent_inode = inode::load(fs, parent)?;
+    if parent_inode.metadata().kind != NodeKind::Directory {
+        return Err(Ext2Error::WrongNodeKind);
+    }
+    match directory::lookup(fs, parent, name) {
+        Ok(_) => return Err(Ext2Error::AlreadyExists),
+        Err(Ext2Error::NotFound) => {}
+        Err(error) => return Err(error),
+    }
+    let number = allocator::claim_inode(fs)?;
+    let data = allocator::claim_block(fs)?;
+    let mut bytes = [0; 256];
+    bytes[on_disk::INODE_MODE..on_disk::INODE_MODE + 2].copy_from_slice(&0x41EDu16.to_le_bytes());
+    bytes[on_disk::INODE_LINKS..on_disk::INODE_LINKS + 2].copy_from_slice(&2u16.to_le_bytes());
+    bytes[on_disk::INODE_SIZE_LO..on_disk::INODE_SIZE_LO + 4]
+        .copy_from_slice(&4096u32.to_le_bytes());
+    bytes[on_disk::INODE_BLOCKS..on_disk::INODE_BLOCKS + 4].copy_from_slice(&8u32.to_le_bytes());
+    bytes[on_disk::INODE_BLOCK..on_disk::INODE_BLOCK + 4].copy_from_slice(&data.to_le_bytes());
+    let fresh = inode::Inode { bytes };
+    inode::store(fs, NodeId(number), &fresh)?;
+    let mut block = [0; BLOCK_BYTES];
+    write_dot_entry(&mut block, 0, 12, number, b".")?;
+    write_dot_entry(&mut block, 12, BLOCK_BYTES - 12, parent.0, b"..")?;
+    write_data_block(fs, data, &block)?;
+    adjust_used_dirs(fs, true)?;
+    adjust_parent_links(fs, parent, true)?;
+    // Parent entry write is last on create.
+    directory::insert(fs, parent, name, NodeId(number), NodeKind::Directory)?;
+    Ok(NodeId(number))
+}
+
+fn write_dot_entry(
+    block: &mut [u8; BLOCK_BYTES],
+    offset: usize,
+    rec_len: usize,
+    child: u32,
+    dot_name: &[u8],
+) -> Result<(), Ext2Error> {
+    let end = offset
+        .checked_add(rec_len)
+        .ok_or(Ext2Error::CorruptMetadata {
+            field: "directory_record_length",
+        })?;
+    if end > BLOCK_BYTES || rec_len < 8 || !rec_len.is_multiple_of(4) {
+        return Err(Ext2Error::CorruptMetadata {
+            field: "directory_record_length",
+        });
+    }
+    let slot = block
+        .get_mut(offset..end)
+        .ok_or(Ext2Error::CorruptMetadata {
+            field: "directory_record_length",
+        })?;
+    slot.fill(0);
+    slot[0..4].copy_from_slice(&child.to_le_bytes());
+    slot[4..6].copy_from_slice(
+        &u16::try_from(rec_len)
+            .map_err(|_| Ext2Error::CorruptMetadata {
+                field: "directory_record_length",
+            })?
+            .to_le_bytes(),
+    );
+    slot[6] = u8::try_from(dot_name.len()).map_err(|_| Ext2Error::CorruptMetadata {
+        field: "directory_name",
+    })?;
+    // File type two: directory.
+    slot[7] = 2;
+    let name_end = 8usize
+        .checked_add(dot_name.len())
+        .ok_or(Ext2Error::CorruptMetadata {
+            field: "directory_name",
+        })?;
+    if name_end > rec_len {
+        return Err(Ext2Error::CorruptMetadata {
+            field: "directory_name",
+        });
+    }
+    slot[8..name_end].copy_from_slice(dot_name);
+    Ok(())
+}
+
+fn adjust_used_dirs<D: BlockDevice>(fs: &mut Ext2<D>, increment: bool) -> Result<(), Ext2Error> {
+    fs.require_writable()?;
+    let mut group = [0; BLOCK_BYTES];
+    fs.read_block(1, &mut group).inspect_err(|_| fs.poison())?;
+    let used = on_disk::u16(&group, on_disk::GROUP_DESCRIPTOR_USED_DIRS, "used_dirs")?;
+    let updated = if increment {
+        used.checked_add(1)
+            .ok_or(Ext2Error::CorruptMetadata { field: "used_dirs" })?
+    } else {
+        used.checked_sub(1)
+            .ok_or(Ext2Error::CorruptMetadata { field: "used_dirs" })?
+    };
+    group[on_disk::GROUP_DESCRIPTOR_USED_DIRS..on_disk::GROUP_DESCRIPTOR_USED_DIRS + 2]
+        .copy_from_slice(&updated.to_le_bytes());
+    let owned = group;
+    fs.write_block(1, &owned)?;
+    flush(fs)?;
+    Ok(())
+}
+
+fn adjust_parent_links<D: BlockDevice>(
+    fs: &mut Ext2<D>,
+    parent: NodeId,
+    increment: bool,
+) -> Result<(), Ext2Error> {
+    fs.require_writable()?;
+    let image = inode::load(fs, parent)?;
+    if image.metadata().kind != NodeKind::Directory {
+        return Err(Ext2Error::WrongNodeKind);
+    }
+    let links = on_disk::u16(&image.bytes, on_disk::INODE_LINKS, "inode_links")?;
+    let updated = if increment {
+        links.checked_add(1).ok_or(Ext2Error::CorruptMetadata {
+            field: "inode_links",
+        })?
+    } else {
+        links.checked_sub(1).ok_or(Ext2Error::CorruptMetadata {
+            field: "inode_links",
+        })?
+    };
+    let mut fresh = inode::Inode { bytes: image.bytes };
+    fresh.bytes[on_disk::INODE_LINKS..on_disk::INODE_LINKS + 2]
+        .copy_from_slice(&updated.to_le_bytes());
+    inode::store(fs, parent, &fresh)?;
+    Ok(())
 }
 
 pub(super) fn write_at<D: BlockDevice>(
@@ -696,6 +821,12 @@ pub(super) fn unlink_file<D: BlockDevice>(
         .copy_from_slice(&0u32.to_le_bytes());
     cleared.bytes[on_disk::INODE_BLOCKS..on_disk::INODE_BLOCKS + 4]
         .copy_from_slice(&0u32.to_le_bytes());
+    // A freed inode must read as unlinked (links zero, mode zero; dtime stays
+    // zero per the zeroed-times policy) so Linux fsck accepts the deletion.
+    cleared.bytes[on_disk::INODE_LINKS..on_disk::INODE_LINKS + 2]
+        .copy_from_slice(&0u16.to_le_bytes());
+    cleared.bytes[on_disk::INODE_MODE..on_disk::INODE_MODE + 2]
+        .copy_from_slice(&0u16.to_le_bytes());
     inode::store(fs, child, &cleared)?;
     for value in direct.iter().chain(indirect_data.iter()) {
         if *value != 0 {
@@ -711,9 +842,66 @@ pub(super) fn unlink_file<D: BlockDevice>(
 
 pub(super) fn remove_dir<D: BlockDevice>(
     fs: &mut Ext2<D>,
-    _parent: NodeId,
-    _name: &Name,
+    parent: NodeId,
+    name: &Name,
 ) -> Result<(), Ext2Error> {
     fs.require_writable()?;
-    Err(Ext2Error::UnsupportedFile)
+    let child = directory::lookup(fs, parent, name)?;
+    if child == fs.root() {
+        return Err(Ext2Error::WrongNodeKind);
+    }
+    let child_image = inode::load(fs, child)?;
+    if child_image.metadata().kind != NodeKind::Directory {
+        return Err(Ext2Error::WrongNodeKind);
+    }
+    if !directory::read_dir(fs, child)?.is_empty() {
+        return Err(Ext2Error::DirectoryNotEmpty);
+    }
+    // Parent entry removal and flush come first.
+    let removed = directory::remove(fs, parent, name)?;
+    if removed != child {
+        return Err(Ext2Error::CorruptMetadata {
+            field: "directory_inode",
+        });
+    }
+    let mut direct = [0; 12];
+    for (index, slot) in direct.iter_mut().enumerate() {
+        *slot = get_direct(&child_image.bytes, index)?;
+    }
+    let indirect = get_direct(&child_image.bytes, 12)?;
+    let mut indirect_data = [0; 1024];
+    if indirect != 0 {
+        read_indirect(fs, indirect, &mut indirect_data)?;
+    }
+    let mut cleared = inode::Inode {
+        bytes: child_image.bytes,
+    };
+    for index in 0..12 {
+        set_direct(&mut cleared.bytes, index, 0)?;
+    }
+    set_direct(&mut cleared.bytes, 12, 0)?;
+    cleared.bytes[on_disk::INODE_SIZE_LO..on_disk::INODE_SIZE_LO + 4]
+        .copy_from_slice(&0u32.to_le_bytes());
+    cleared.bytes[on_disk::INODE_BLOCKS..on_disk::INODE_BLOCKS + 4]
+        .copy_from_slice(&0u32.to_le_bytes());
+    // A freed inode must read as unlinked (links zero; no clock for dtime)
+    // so Linux fsck accepts the deletion. The zeroed mode below returns the
+    // record to pristine free-inode state instead of faking a timestamp.
+    cleared.bytes[on_disk::INODE_LINKS..on_disk::INODE_LINKS + 2]
+        .copy_from_slice(&0u16.to_le_bytes());
+    cleared.bytes[on_disk::INODE_MODE..on_disk::INODE_MODE + 2]
+        .copy_from_slice(&0u16.to_le_bytes());
+    inode::store(fs, child, &cleared)?;
+    for value in direct.iter().chain(indirect_data.iter()) {
+        if *value != 0 {
+            allocator::release_block(fs, *value)?;
+        }
+    }
+    if indirect != 0 {
+        allocator::release_block(fs, indirect)?;
+    }
+    allocator::release_inode(fs, child.0)?;
+    adjust_used_dirs(fs, false)?;
+    adjust_parent_links(fs, parent, false)?;
+    Ok(())
 }
