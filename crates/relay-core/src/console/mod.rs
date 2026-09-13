@@ -1,3 +1,6 @@
+pub mod line_editor;
+
+pub use line_editor::{EditAction, Key, LineEditor};
 mod framebuffer;
 
 pub use framebuffer::{
