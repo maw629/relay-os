@@ -56,7 +56,7 @@ impl<D: BlockDevice> Ext2<D> {
     }
 
     pub fn metadata(&mut self, node: NodeId) -> Result<Metadata, Ext2Error> {
-        Ok(inode::load(self, node)?.metadata())
+        inode::load(self, node)?.metadata()
     }
 
     pub fn lookup(&mut self, dir: NodeId, name: &Name) -> Result<NodeId, Ext2Error> {

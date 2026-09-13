@@ -22,7 +22,7 @@ pub(super) struct Inode {
 }
 
 impl Inode {
-    pub(super) fn metadata(&self) -> Metadata {
+    pub(super) fn metadata(&self) -> Result<Metadata, Ext2Error> {
         let mode = u16::from_le_bytes([
             self.bytes[on_disk::INODE_MODE],
             self.bytes[on_disk::INODE_MODE + 1],
@@ -30,7 +30,12 @@ impl Inode {
         let kind = match mode & S_IFMT {
             S_IFREG => NodeKind::Regular,
             S_IFDIR => NodeKind::Directory,
-            _ => unreachable!("inode mode was validated when loaded"),
+            // Note: load() validates first, so live load()->metadata() surfaces UnsupportedFile; this arm is defense-in-depth.
+            _ => {
+                return Err(Ext2Error::CorruptMetadata {
+                    field: "inode_mode",
+                });
+            }
         };
         let len = u32::from_le_bytes([
             self.bytes[on_disk::INODE_SIZE_LO],
@@ -38,11 +43,11 @@ impl Inode {
             self.bytes[on_disk::INODE_SIZE_LO + 2],
             self.bytes[on_disk::INODE_SIZE_LO + 3],
         ]);
-        Metadata {
+        Ok(Metadata {
             kind,
             len: u64::from(len),
             mode: mode & !S_IFMT,
-        }
+        })
     }
 
     fn pointer(&self, index: usize) -> Result<u32, Ext2Error> {
@@ -115,7 +120,7 @@ pub(super) fn read_at<D: BlockDevice>(
         return Ok(0);
     }
     let inode = load(fs, node)?;
-    let metadata = inode.metadata();
+    let metadata = inode.metadata()?;
     if metadata.kind != NodeKind::Regular {
         return Err(Ext2Error::WrongNodeKind);
     }
@@ -253,4 +258,43 @@ fn require_data_block<D: BlockDevice>(fs: &Ext2<D>, block: u32) -> Result<(), Ex
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::NodeKind;
+
+    fn inode_with_mode(mode: u16) -> Inode {
+        let mut bytes = [0; INODE_BYTES];
+        bytes[on_disk::INODE_MODE..on_disk::INODE_MODE + 2].copy_from_slice(&mode.to_le_bytes());
+        Inode { bytes }
+    }
+
+    #[test]
+    fn metadata_rejects_bad_inode_mode_without_panicking() {
+        for bad in [0x0000_u16, 0xa000_u16, 0x2000_u16, 0xffff_u16] {
+            let inode = inode_with_mode(bad);
+            assert_eq!(
+                inode.metadata(),
+                Err(Ext2Error::CorruptMetadata {
+                    field: "inode_mode"
+                }),
+                "bad mode {bad:#06x} must return CorruptMetadata",
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_reports_regular_and_directory_kinds() {
+        let regular = inode_with_mode(S_IFREG | 0o644);
+        let metadata = regular.metadata().unwrap();
+        assert_eq!(metadata.kind, NodeKind::Regular);
+        assert_eq!(metadata.mode, 0o644);
+
+        let dir = inode_with_mode(S_IFDIR | 0o755);
+        let metadata = dir.metadata().unwrap();
+        assert_eq!(metadata.kind, NodeKind::Directory);
+        assert_eq!(metadata.mode, 0o755);
+    }
 }

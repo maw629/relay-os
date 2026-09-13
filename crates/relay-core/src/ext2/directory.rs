@@ -49,7 +49,7 @@ fn visit<D: BlockDevice>(
     mut visitor: impl FnMut(NodeId, Option<Name>, NodeKind) -> Result<(), Ext2Error>,
 ) -> Result<(), Ext2Error> {
     let inode = inode::load(fs, dir)?;
-    let metadata = inode.metadata();
+    let metadata = inode.metadata()?;
     if metadata.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
@@ -84,7 +84,7 @@ fn visit<D: BlockDevice>(
                 continue;
             };
             let child = inode::load(fs, node)?;
-            if child.metadata().kind != kind {
+            if child.metadata()?.kind != kind {
                 return Err(Ext2Error::CorruptMetadata {
                     field: "directory_file_type",
                 });
