@@ -243,6 +243,9 @@ pub(super) fn insert<D: BlockDevice>(
         }
     }
     if !placed {
+        // Task 9 scope: directories grow through direct blocks only (no
+        // indirect directory growth). Revisit NoSpace-vs-Corrupt only if a
+        // later task needs it.
         return Err(Ext2Error::CorruptMetadata {
             field: "directory_block",
         });

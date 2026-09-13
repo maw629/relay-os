@@ -298,12 +298,12 @@ pub(super) fn write_at<D: BlockDevice>(
 ) -> Result<(), Ext2Error> {
     fs.require_writable()?;
     let end = check_end(offset, src.len())?;
-    if src.is_empty() {
-        return Ok(());
-    }
     let image = inode::load(fs, node)?;
     if image.metadata().kind != NodeKind::Regular {
         return Err(Ext2Error::WrongNodeKind);
+    }
+    if src.is_empty() {
+        return Ok(());
     }
     let old_size = image.metadata().len;
     let new_size = old_size.max(end);
@@ -476,13 +476,9 @@ pub(super) fn write_at<D: BlockDevice>(
         dest_slice.copy_from_slice(src_slice);
         write_data_block(fs, target, &block_buf)?;
     }
-    if indirect_dirty || (needs_indirect && indirect_present) {
+    if indirect_dirty {
         // Write the indirect block when it is new or gained pointers.
-        // Checking dirty via comparison is complex; write when needed and
-        // any new pointer was added (indirect_dirty) or when newly created.
-        if indirect_dirty {
-            write_indirect(fs, indirect, &indirect_data)?;
-        }
+        write_indirect(fs, indirect, &indirect_data)?;
     }
     // Publish pointers, size, and block count into the inode image.
     let mut updated = image;
