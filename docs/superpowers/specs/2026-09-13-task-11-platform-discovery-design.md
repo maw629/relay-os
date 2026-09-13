@@ -270,13 +270,32 @@ frames.
 ## Kernel Adapters And Diagnostic Probe
 
 - `arch/x86_64/mmio.rs` exposes `map_uncached(phys_base, byte_len) ->
-  Result<*mut u8, MapError>` as a safe wrapper that validates nonzero
-  base, nonzero page-rounded length, overflow, and the direct-map/MMIO
-  ceiling, then delegates to the Task 4 checked mapper with an
-  uncached attribute, propagating the mapper's existing error type
-  (no new error enum is introduced for mapping). Each unsafe block
-  names the loader-mapping and exclusivity invariants. No page-table
-  code is added or duplicated.
+  Result<*mut u8, MapError>` as a minimal runtime 4K PTE installer.
+  Amendment (2026-09-13): grounding showed the Task 4 `map_pci_bar`
+  helper runs pre-handoff on loader-owned tables and the kernel has no
+  page-table code, so a pure wrapper is impossible. The installer
+  instead reuses what Task 4 left reusable — the
+  `0xFFFF_C000_0000_0000` window (`PCI_BAR_VIRTUAL_START`), the
+  align-and-cover range discipline of `bar_mapping_range`, and the same
+  uncached flag set — and adds the small runtime walker the kernel was
+  missing. Concretely it validates nonzero base, nonzero page-rounded
+  length, overflow, and the direct-map/MMIO ceiling, then for each 4K
+  page reads the live paging depth from `CR4.LA57`, walks the active
+  hierarchy via the direct map (allocating missing intermediate-table
+  pages from `PhysicalFrameAllocator`), refuses already-present leaf
+  entries, installs `PRESENT | WRITABLE | NO_EXECUTE | CACHE_DISABLE |
+  WRITE_THROUGH` PTEs, and flushes the TLB. Virtual addresses come
+  from a kernel-side bump pointer starting at `PCI_BAR_VIRTUAL_START`,
+  which is safe because the loader never calls `map_pci_bar` today
+  (stated invariant; if the loader ever pre-maps a BAR it must publish
+  its bump offset in `BootInfo`). Page-index math, entry-flag logic,
+  and refuse-present behavior take the depth and table bytes as
+  parameters so host tests cover them over a `Vec`-backed table fake;
+  only the CR3 read, frame allocation, and flush stay behind the
+  kernel boundary. Each unsafe block names the live-table,
+  exclusivity, and single-core (no concurrent mapper) invariants. It
+  propagates a small local `MapError` (`InvalidRange`, `AlreadyMapped`,
+  `NoMemory`, `UnsupportedDepth`).
 - `arch/x86_64/dma.rs` implements `DmaAllocator` over
   `PhysicalFrameAllocator::allocate_frame`, skipping frames that overlap
   the retained boot info and memory map exactly as the existing
@@ -350,6 +369,12 @@ records every write for restore-order assertions).
   `max_address + 1` rejected; non-power-of-two and over-64K aligns
   rejected; zero and over-4 MiB sizes rejected; contiguity across a
   reserved-frame hole; exhaustion to `NoMemory`.
+- `mmio.rs` host coverage (new file, no integration-test target
+  needed): page-index vectors for 4- and 5-level depths, UC flag
+  assembly, refuse-present-leaf, unaligned/overflow/ceiling rejections,
+  and bump-window allocation order, all over the `Vec`-backed table
+  fake; kernel glue (CR3 read, frame alloc, flush) is reviewed, not
+  unit-tested.
 
 Verification runs:
 
@@ -365,7 +390,8 @@ cargo test --workspace --locked
 Task 11 performs no xHCI resets, ownership handoffs, ring allocation, or
 doorbell/event processing (Task 12); binds no HID or mass-storage
 interface (Tasks 13-14); wires no shell persistence path (Task 15);
-builds no page tables, IOMMU domains, or DMA free lists; supports no
+builds no general page-table management beyond the minimal MMIO
+installer, no IOMMU domains, and no DMA free lists; supports no
 multi-segment PCI, cardbus bridges, I/O-space BARs, or hot-plug; and
 makes no VT-d firmware requirement beyond recording its state and
 enforcing the stop-and-ask rule.
