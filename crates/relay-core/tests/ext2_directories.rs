@@ -78,3 +78,25 @@ fn mkdir_rejects_duplicate_and_rmdir_empties() {
     assert!(fs.read_dir(docs).unwrap().is_empty());
     fs.unmount().unwrap();
 }
+
+#[test]
+fn directory_growth_beyond_direct_blocks_reports_no_space() {
+    let image = fixture_with_files(&[]).unwrap();
+    let mut fs = Ext2::mount(image.open().unwrap(), MountMode::ReadWrite).unwrap();
+    let docs = fs.create_dir(fs.root(), &name(b"docs")).unwrap();
+    // Long names fill each 4 KiB block with ~19 entries, so ~228 entries
+    // fill all 12 direct blocks; the next growth must report NoSpace.
+    let mut outcome = None;
+    for i in 0..600 {
+        let entry = format!(
+            "long-entry-name-padded-to-two-hundred-chars-{i:04}-{}",
+            "x".repeat(140)
+        );
+        let result = fs.create_file(docs, &name(entry.as_bytes()));
+        if let Err(error) = result {
+            outcome = Some(error);
+            break;
+        }
+    }
+    assert_eq!(outcome, Some(Ext2Error::NoSpace));
+}

@@ -20,7 +20,7 @@ fn read_data_block<D: BlockDevice>(
     block: u32,
     out: &mut [u8; BLOCK_BYTES],
 ) -> Result<(), Ext2Error> {
-    fs.read_block(block, out).inspect_err(|_| fs.poison())
+    fs.read_block(block, out)
 }
 
 fn write_data_block<D: BlockDevice>(

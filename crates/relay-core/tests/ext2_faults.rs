@@ -688,6 +688,58 @@ fn success_unlink_and_rmdir_pass_host_fsck() {
 }
 
 #[test]
+fn failed_read_does_not_poison_mutation() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    struct FailSecondRead<D> {
+        inner: D,
+        reads_after_arm: Rc<Cell<usize>>,
+    }
+    impl<D: BlockDevice> BlockDevice for FailSecondRead<D> {
+        fn geometry(&self) -> BlockGeometry {
+            self.inner.geometry()
+        }
+        fn read_sectors(&mut self, first_lba: u64, dst: &mut [u8]) -> Result<(), BlockError> {
+            let n = self.reads_after_arm.get();
+            // Before arming the counter is usize::MAX (pass-through).
+            if n != usize::MAX {
+                self.reads_after_arm.set(n + 1);
+                // write_at does inode::load (1 read) then read_indirect
+                // via read_data_block; fail exactly the indirect read.
+                if n == 1 {
+                    return Err(BlockError::Transport);
+                }
+            }
+            self.inner.read_sectors(first_lba, dst)
+        }
+        fn write_sectors(&mut self, first_lba: u64, src: &[u8]) -> Result<(), BlockError> {
+            self.inner.write_sectors(first_lba, src)
+        }
+        fn flush(&mut self) -> Result<(), BlockError> {
+            self.inner.flush()
+        }
+    }
+    // Overwrite inside the indirect region of a 13-block file: the second
+    // mutation read is the indirect block via read_data_block, before any
+    // writes. Failing exactly that read must not poison the mount (M3).
+    let contents = vec![0xAB; 13 * 4096];
+    let image = fixture_with_files(&[("big", &contents)]).unwrap();
+    let reads_after_arm = Rc::new(Cell::new(usize::MAX));
+    let device = FailSecondRead {
+        inner: image.open().unwrap(),
+        reads_after_arm: reads_after_arm.clone(),
+    };
+    let mut fs = Ext2::mount(device, MountMode::ReadWrite).unwrap();
+    let node = fs.lookup(fs.root(), &name(b"big")).unwrap();
+    reads_after_arm.set(0);
+    let result = fs.write_at(node, 12 * 4096, b"x");
+    assert!(result.is_err());
+    assert_eq!(fs.health(), MountHealth::Writable);
+    // Later mutation must still be allowed.
+    fs.create_file(fs.root(), &name(b"still-ok")).unwrap();
+}
+
+#[test]
 fn generated_root_is_clean_after_xtask_image() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/root.ext2");
     if !root.exists() {
