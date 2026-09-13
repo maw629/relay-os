@@ -78,6 +78,12 @@ fn error_message(error: ShellError) -> &'static [u8] {
         ShellError::Vfs(VfsError::Fs(FsError::Corrupt)) => b"filesystem corrupt",
         ShellError::Vfs(VfsError::Fs(FsError::Unsupported)) => b"unsupported file",
         ShellError::Vfs(VfsError::Fs(FsError::Io)) => b"I/O failure",
+        ShellError::Vfs(VfsError::Fs(FsError::FileTooLarge)) => b"file too large",
+        ShellError::Vfs(VfsError::Fs(FsError::WriteDisabled)) => b"write disabled",
+        ShellError::Vfs(VfsError::Fs(FsError::ReadOnly)) => b"read-only filesystem",
+        ShellError::Vfs(VfsError::Fs(FsError::AlreadyExists)) => b"already exists",
+        ShellError::Vfs(VfsError::Fs(FsError::NotEmpty)) => b"directory not empty",
+        ShellError::Vfs(VfsError::Fs(FsError::NoSpace)) => b"no space left",
         ShellError::Unavailable => b"command unavailable",
     }
 }

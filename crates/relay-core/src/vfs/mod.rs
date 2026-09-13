@@ -18,6 +18,36 @@ pub trait FileSystem {
     fn lookup(&mut self, dir: NodeId, name: &Name) -> Result<NodeId, FsError>;
     fn read_dir(&mut self, dir: NodeId) -> Result<Vec<DirEntry>, FsError>;
     fn read_at(&mut self, node: NodeId, offset: u64, dst: &mut [u8]) -> Result<usize, FsError>;
+    fn write_at(&mut self, node: NodeId, offset: u64, src: &[u8]) -> Result<(), FsError> {
+        let _ = (node, offset, src);
+        Err(FsError::Unsupported)
+    }
+    fn truncate(&mut self, node: NodeId, len: u64) -> Result<(), FsError> {
+        let _ = (node, len);
+        Err(FsError::Unsupported)
+    }
+    fn create_file(&mut self, parent: NodeId, name: &Name) -> Result<NodeId, FsError> {
+        let _ = (parent, name);
+        Err(FsError::Unsupported)
+    }
+    fn create_dir(&mut self, parent: NodeId, name: &Name) -> Result<NodeId, FsError> {
+        let _ = (parent, name);
+        Err(FsError::Unsupported)
+    }
+    fn unlink_file(&mut self, parent: NodeId, name: &Name) -> Result<(), FsError> {
+        let _ = (parent, name);
+        Err(FsError::Unsupported)
+    }
+    fn remove_dir(&mut self, parent: NodeId, name: &Name) -> Result<(), FsError> {
+        let _ = (parent, name);
+        Err(FsError::Unsupported)
+    }
+    fn sync(&mut self) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
+    fn unmount(&mut self) -> Result<(), FsError> {
+        Err(FsError::Unsupported)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,6 +58,12 @@ pub enum FsError {
     Unsupported,
     Allocation,
     Io,
+    FileTooLarge,
+    WriteDisabled,
+    ReadOnly,
+    AlreadyExists,
+    NotEmpty,
+    NoSpace,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,6 +99,38 @@ impl<D: BlockDevice> FileSystem for Ext2<D> {
     fn read_at(&mut self, node: NodeId, offset: u64, dst: &mut [u8]) -> Result<usize, FsError> {
         self.read_at(node, offset, dst).map_err(map_ext2_error)
     }
+
+    fn write_at(&mut self, node: NodeId, offset: u64, src: &[u8]) -> Result<(), FsError> {
+        self.write_at(node, offset, src).map_err(map_ext2_error)
+    }
+
+    fn truncate(&mut self, node: NodeId, len: u64) -> Result<(), FsError> {
+        self.truncate(node, len).map_err(map_ext2_error)
+    }
+
+    fn create_file(&mut self, parent: NodeId, name: &Name) -> Result<NodeId, FsError> {
+        self.create_file(parent, name).map_err(map_ext2_error)
+    }
+
+    fn create_dir(&mut self, parent: NodeId, name: &Name) -> Result<NodeId, FsError> {
+        self.create_dir(parent, name).map_err(map_ext2_error)
+    }
+
+    fn unlink_file(&mut self, parent: NodeId, name: &Name) -> Result<(), FsError> {
+        self.unlink_file(parent, name).map_err(map_ext2_error)
+    }
+
+    fn remove_dir(&mut self, parent: NodeId, name: &Name) -> Result<(), FsError> {
+        self.remove_dir(parent, name).map_err(map_ext2_error)
+    }
+
+    fn sync(&mut self) -> Result<(), FsError> {
+        self.sync().map_err(map_ext2_error)
+    }
+
+    fn unmount(&mut self) -> Result<(), FsError> {
+        self.unmount().map_err(map_ext2_error)
+    }
 }
 
 fn map_ext2_error(error: Ext2Error) -> FsError {
@@ -72,6 +140,12 @@ fn map_ext2_error(error: Ext2Error) -> FsError {
         Ext2Error::Allocation => FsError::Allocation,
         Ext2Error::Block(_) => FsError::Io,
         Ext2Error::UnsupportedFile => FsError::Unsupported,
+        Ext2Error::FileTooLarge => FsError::FileTooLarge,
+        Ext2Error::WriteDisabled => FsError::WriteDisabled,
+        Ext2Error::ReadOnly => FsError::ReadOnly,
+        Ext2Error::AlreadyExists => FsError::AlreadyExists,
+        Ext2Error::DirectoryNotEmpty => FsError::NotEmpty,
+        Ext2Error::NoSpace => FsError::NoSpace,
         Ext2Error::UnsupportedSector { .. }
         | Ext2Error::UnsupportedProfile { .. }
         | Ext2Error::UnsupportedFeature { .. }
