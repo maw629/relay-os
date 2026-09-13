@@ -14,6 +14,10 @@ pub const SUPERBLOCK_FRAGMENTS_PER_GROUP: usize = 36;
 pub const SUPERBLOCK_INODES_PER_GROUP: usize = 40;
 pub const SUPERBLOCK_MAGIC: usize = 56;
 pub const SUPERBLOCK_STATE: usize = 58;
+#[allow(dead_code)] // Tasks 2 and 3 account free blocks and inodes through this module.
+pub const SUPERBLOCK_FREE_BLOCKS: usize = 12;
+#[allow(dead_code)] // Tasks 2 and 3 account free blocks and inodes through this module.
+pub const SUPERBLOCK_FREE_INODES: usize = 16;
 #[allow(dead_code)] // Retained with the complete superblock field map for later mount-state support.
 pub const SUPERBLOCK_ERRORS: usize = 60;
 pub const SUPERBLOCK_REVISION_LEVEL: usize = 76;
@@ -25,11 +29,33 @@ pub const SUPERBLOCK_FEATURE_RO_COMPAT: usize = 100;
 pub const GROUP_DESCRIPTOR_BLOCK_BITMAP: usize = 0;
 pub const GROUP_DESCRIPTOR_INODE_BITMAP: usize = 4;
 pub const GROUP_DESCRIPTOR_INODE_TABLE: usize = 8;
+#[allow(dead_code)] // Tasks 2 and 3 account free blocks and inodes through this module.
+pub const GROUP_DESCRIPTOR_FREE_BLOCKS: usize = 12;
+#[allow(dead_code)] // Tasks 2 and 3 account free blocks and inodes through this module.
+pub const GROUP_DESCRIPTOR_FREE_INODES: usize = 14;
+#[allow(dead_code)] // Tasks 2 and 3 account free blocks and inodes through this module.
+pub const GROUP_DESCRIPTOR_USED_DIRS: usize = 16;
 
 #[allow(dead_code)] // Tasks 2 and 3 decode these records through this module.
 pub const INODE_MODE: usize = 0;
 #[allow(dead_code)]
+pub const INODE_UID: usize = 2;
+#[allow(dead_code)]
 pub const INODE_SIZE_LO: usize = 4;
+#[allow(dead_code)]
+pub const INODE_ATIME: usize = 8;
+#[allow(dead_code)]
+pub const INODE_CTIME: usize = 12;
+#[allow(dead_code)]
+pub const INODE_MTIME: usize = 16;
+#[allow(dead_code)]
+pub const INODE_DTIME: usize = 20;
+#[allow(dead_code)]
+pub const INODE_GID: usize = 24;
+#[allow(dead_code)]
+pub const INODE_LINKS: usize = 26;
+#[allow(dead_code)]
+pub const INODE_BLOCKS: usize = 28;
 #[allow(dead_code)]
 pub const INODE_FLAGS: usize = 32;
 #[allow(dead_code)]
