@@ -17,6 +17,12 @@ pub enum ShellError {
     Allocation,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShellOutcome {
+    Continue,
+    Shutdown,
+}
+
 pub struct Shell<F, O> {
     vfs: Vfs<F>,
     cwd: Cwd,
@@ -29,21 +35,21 @@ impl<F: FileSystem, O: TextOutput> Shell<F, O> {
         Self { vfs, cwd, output }
     }
 
-    pub fn run(&mut self, line: &str) -> Result<(), ShellError> {
+    pub fn run(&mut self, line: &str) -> Result<ShellOutcome, ShellError> {
         let result = match parse_command(line) {
-            Ok(Some(command)) => commands::execute_read_command(
-                command,
-                &mut self.vfs,
-                &mut self.cwd,
-                &mut self.output,
-            ),
-            Ok(None) => Ok(()),
+            Ok(Some(command)) => {
+                commands::execute_command(command, &mut self.vfs, &mut self.cwd, &mut self.output)
+            }
+            Ok(None) => Ok(ShellOutcome::Continue),
             Err(error) => Err(ShellError::Parse(error)),
         };
-        if let Err(error) = result {
-            self.write_error(error);
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                self.write_error(error);
+                Ok(ShellOutcome::Continue)
+            }
         }
-        Ok(())
     }
 
     pub fn output(&self) -> &O {
@@ -84,6 +90,7 @@ fn error_message(error: ShellError) -> &'static [u8] {
         ShellError::Vfs(VfsError::Fs(FsError::AlreadyExists)) => b"already exists",
         ShellError::Vfs(VfsError::Fs(FsError::NotEmpty)) => b"directory not empty",
         ShellError::Vfs(VfsError::Fs(FsError::NoSpace)) => b"no space left",
+        ShellError::Vfs(VfsError::Busy) => b"directory busy",
         ShellError::Unavailable => b"command unavailable",
     }
 }

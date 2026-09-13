@@ -3,10 +3,10 @@ use alloc::{string::String, vec::Vec};
 use crate::{
     console::TextOutput,
     fs::NodeKind,
-    vfs::{Cwd, FileSystem, Vfs},
+    vfs::{Cwd, FileSystem, FsError, Vfs, VfsError},
 };
 
-use super::{ParseError, ShellError, tokenize};
+use super::{ParseError, ShellError, ShellOutcome, tokenize};
 
 pub enum Command {
     Help,
@@ -85,12 +85,12 @@ pub fn parse_command(line: &str) -> Result<Option<Command>, ParseError> {
     Ok(Some(command))
 }
 
-pub(super) fn execute_read_command<F: FileSystem, O: TextOutput>(
+pub(super) fn execute_command<F: FileSystem, O: TextOutput>(
     command: Command,
     vfs: &mut Vfs<F>,
     cwd: &mut Cwd,
     output: &mut O,
-) -> Result<(), ShellError> {
+) -> Result<ShellOutcome, ShellError> {
     match command {
         Command::Help => output.write_bytes(HELP),
         Command::Pwd => {
@@ -141,19 +141,43 @@ pub(super) fn execute_read_command<F: FileSystem, O: TextOutput>(
             }
             output.write_bytes(b"\n");
         }
-        Command::Touch { .. }
-        | Command::Write { .. }
-        | Command::Append { .. }
-        | Command::Mkdir { .. }
-        | Command::Rm { .. }
-        | Command::Rmdir { .. }
-        | Command::Sync
-        | Command::Shutdown => return Err(ShellError::Unavailable),
+        Command::Touch { path } => match vfs.create_file(cwd, &path) {
+            Ok(_) => {}
+            Err(VfsError::Fs(FsError::AlreadyExists)) => {
+                vfs.read_file(cwd, &path, |_| Ok(()))
+                    .map_err(ShellError::Vfs)?;
+            }
+            Err(error) => return Err(ShellError::Vfs(error)),
+        },
+        Command::Write { path, text } => {
+            vfs.write_file(cwd, &path, text.as_bytes())
+                .map_err(ShellError::Vfs)?;
+        }
+        Command::Append { path, text } => {
+            vfs.append_file(cwd, &path, text.as_bytes())
+                .map_err(ShellError::Vfs)?;
+        }
+        Command::Mkdir { path } => {
+            vfs.create_dir(cwd, &path).map_err(ShellError::Vfs)?;
+        }
+        Command::Rm { path } => {
+            vfs.unlink_file(cwd, &path).map_err(ShellError::Vfs)?;
+        }
+        Command::Rmdir { path } => {
+            vfs.remove_dir(cwd, &path).map_err(ShellError::Vfs)?;
+        }
+        Command::Sync => {
+            vfs.sync_fs().map_err(ShellError::Vfs)?;
+        }
+        Command::Shutdown => {
+            vfs.unmount_fs().map_err(ShellError::Vfs)?;
+            return Ok(ShellOutcome::Shutdown);
+        }
     }
-    Ok(())
+    Ok(ShellOutcome::Continue)
 }
 
-const HELP: &[u8] = b"help\npwd\ncd PATH\nls [PATH]\ncat PATH\necho [TEXT ...]\ntouch PATH unavailable\nwrite PATH [TEXT ...] unavailable\nappend PATH [TEXT ...] unavailable\nmkdir PATH unavailable\nrm PATH unavailable\nrmdir PATH unavailable\nsync unavailable\nshutdown unavailable\n";
+const HELP: &[u8] = b"help\npwd\ncd PATH\nls [PATH]\ncat PATH\necho [TEXT ...]\ntouch PATH\nwrite PATH [TEXT ...]\nappend PATH [TEXT ...]\nmkdir PATH\nrm PATH\nrmdir PATH\nsync\nshutdown\n";
 
 fn write_number(output: &mut impl TextOutput, value: u64) {
     let mut bytes = [0; 20];

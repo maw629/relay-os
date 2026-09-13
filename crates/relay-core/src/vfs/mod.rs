@@ -7,6 +7,7 @@ use crate::{
     ext2::{Ext2, Ext2Error},
     fs::{DirEntry, Metadata, Name, NodeId, NodeKind},
 };
+use alloc::string::String;
 use alloc::vec::Vec;
 
 const MAX_PATH_BYTES: usize = 4096;
@@ -73,6 +74,7 @@ pub enum VfsError {
     NotDirectory,
     NotRegularFile,
     Allocation,
+    Busy,
 }
 
 pub struct Vfs<F> {
@@ -317,6 +319,175 @@ impl<F: FileSystem> Vfs<F> {
                 .ok_or(VfsError::Fs(FsError::Corrupt))?;
         }
         Ok(())
+    }
+
+    pub fn create_file(&mut self, cwd: &Cwd, path: &str) -> Result<NodeId, VfsError> {
+        let (parent, name) = self.split_parent(cwd, path, false)?;
+        let dir = self.resolve(cwd, &parent)?.node;
+        if self.filesystem.metadata(dir).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        self.filesystem
+            .create_file(dir, &name)
+            .map_err(VfsError::Fs)
+    }
+
+    pub fn create_dir(&mut self, cwd: &Cwd, path: &str) -> Result<NodeId, VfsError> {
+        let (parent, name) = self.split_parent(cwd, path, true)?;
+        let dir = self.resolve(cwd, &parent)?.node;
+        if self.filesystem.metadata(dir).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        self.filesystem.create_dir(dir, &name).map_err(VfsError::Fs)
+    }
+
+    pub fn write_file(&mut self, cwd: &Cwd, path: &str, text: &[u8]) -> Result<(), VfsError> {
+        let (parent, name) = self.split_parent(cwd, path, false)?;
+        let dir = self.resolve(cwd, &parent)?.node;
+        if self.filesystem.metadata(dir).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        let node = match self.filesystem.lookup(dir, &name) {
+            Ok(node) => {
+                if self.filesystem.metadata(node).map_err(VfsError::Fs)?.kind != NodeKind::Regular {
+                    return Err(VfsError::NotRegularFile);
+                }
+                node
+            }
+            Err(FsError::NotFound) => self
+                .filesystem
+                .create_file(dir, &name)
+                .map_err(VfsError::Fs)?,
+            Err(other) => return Err(VfsError::Fs(other)),
+        };
+        self.filesystem.truncate(node, 0).map_err(VfsError::Fs)?;
+        self.filesystem
+            .write_at(node, 0, text)
+            .map_err(VfsError::Fs)
+    }
+
+    pub fn append_file(&mut self, cwd: &Cwd, path: &str, text: &[u8]) -> Result<(), VfsError> {
+        let (parent, name) = self.split_parent(cwd, path, false)?;
+        let dir = self.resolve(cwd, &parent)?.node;
+        if self.filesystem.metadata(dir).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        let node = match self.filesystem.lookup(dir, &name) {
+            Ok(node) => {
+                let metadata = self.filesystem.metadata(node).map_err(VfsError::Fs)?;
+                if metadata.kind != NodeKind::Regular {
+                    return Err(VfsError::NotRegularFile);
+                }
+                node
+            }
+            Err(FsError::NotFound) => self
+                .filesystem
+                .create_file(dir, &name)
+                .map_err(VfsError::Fs)?,
+            Err(other) => return Err(VfsError::Fs(other)),
+        };
+        if text.is_empty() {
+            return Ok(());
+        }
+        let len = self.filesystem.metadata(node).map_err(VfsError::Fs)?.len;
+        self.filesystem
+            .write_at(node, len, text)
+            .map_err(VfsError::Fs)
+    }
+
+    pub fn unlink_file(&mut self, cwd: &Cwd, path: &str) -> Result<(), VfsError> {
+        let (parent, name) = self.split_parent(cwd, path, false)?;
+        let dir = self.resolve(cwd, &parent)?.node;
+        if self.filesystem.metadata(dir).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        let node = self.filesystem.lookup(dir, &name).map_err(VfsError::Fs)?;
+        if self.filesystem.metadata(node).map_err(VfsError::Fs)?.kind != NodeKind::Regular {
+            return Err(VfsError::NotRegularFile);
+        }
+        self.filesystem
+            .unlink_file(dir, &name)
+            .map_err(VfsError::Fs)
+    }
+
+    pub fn remove_dir(&mut self, cwd: &Cwd, path: &str) -> Result<(), VfsError> {
+        let (parent, name) = self.split_parent(cwd, path, true)?;
+        let resolved_parent = self.resolve(cwd, &parent)?;
+        let dir = resolved_parent.node;
+        if self.filesystem.metadata(dir).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        let node = self.filesystem.lookup(dir, &name).map_err(VfsError::Fs)?;
+        if self.filesystem.metadata(node).map_err(VfsError::Fs)?.kind != NodeKind::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+        let mut target = resolved_parent.components;
+        target.try_reserve(1).map_err(|_| VfsError::Allocation)?;
+        target.push(name.clone());
+        if cwd.components.len() >= target.len() && cwd.components[..target.len()] == target[..] {
+            return Err(VfsError::Busy);
+        }
+        self.filesystem.remove_dir(dir, &name).map_err(VfsError::Fs)
+    }
+
+    pub fn sync_fs(&mut self) -> Result<(), VfsError> {
+        self.filesystem.sync().map_err(VfsError::Fs)
+    }
+
+    pub fn unmount_fs(&mut self) -> Result<(), VfsError> {
+        self.filesystem.unmount().map_err(VfsError::Fs)
+    }
+
+    fn split_parent(
+        &mut self,
+        cwd: &Cwd,
+        path: &str,
+        dir_target: bool,
+    ) -> Result<(String, Name), VfsError> {
+        if path.len() > MAX_PATH_BYTES || !path.is_ascii() {
+            return Err(VfsError::InvalidPath);
+        }
+        if !dir_target && path.as_bytes().last() == Some(&b'/') {
+            return Err(VfsError::NotDirectory);
+        }
+        let effective = if dir_target {
+            let stripped = path.trim_end_matches('/');
+            if stripped.is_empty() {
+                return Err(VfsError::InvalidPath);
+            }
+            stripped
+        } else {
+            path
+        };
+        let (parent_part, final_part) = match effective.rfind('/') {
+            Some(index) => (&effective[..index], &effective[index + 1..]),
+            None => ("", effective),
+        };
+        if final_part.is_empty() {
+            return Err(VfsError::InvalidPath);
+        }
+        let name = Name::new(final_part.as_bytes()).map_err(map_name_error)?;
+        let parent = if parent_part.is_empty() {
+            if effective.starts_with('/') {
+                let mut parent = String::new();
+                parent
+                    .try_reserve_exact(1)
+                    .map_err(|_| VfsError::Allocation)?;
+                parent.push('/');
+                parent
+            } else {
+                let bytes = self.cwd_path(cwd)?;
+                String::from_utf8(bytes).map_err(|_| VfsError::InvalidPath)?
+            }
+        } else {
+            let mut parent = String::new();
+            parent
+                .try_reserve_exact(parent_part.len())
+                .map_err(|_| VfsError::Allocation)?;
+            parent.push_str(parent_part);
+            parent
+        };
+        Ok((parent, name))
     }
 
     fn resolve_components(&mut self, components: &[Name]) -> Result<NodeId, VfsError> {

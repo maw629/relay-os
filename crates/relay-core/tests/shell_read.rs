@@ -56,14 +56,14 @@ fn failed_cd_preserves_the_working_directory_and_writes_one_error_line() {
 }
 
 #[test]
-fn help_lists_read_commands_and_marks_mutations_unavailable() {
+fn help_lists_all_available_commands() {
     let mut shell = fixture_shell(&[]);
 
     shell.run("help").unwrap();
 
     assert_eq!(
         shell.output().0,
-        b"help\npwd\ncd PATH\nls [PATH]\ncat PATH\necho [TEXT ...]\ntouch PATH unavailable\nwrite PATH [TEXT ...] unavailable\nappend PATH [TEXT ...] unavailable\nmkdir PATH unavailable\nrm PATH unavailable\nrmdir PATH unavailable\nsync unavailable\nshutdown unavailable\n"
+        b"help\npwd\ncd PATH\nls [PATH]\ncat PATH\necho [TEXT ...]\ntouch PATH\nwrite PATH [TEXT ...]\nappend PATH [TEXT ...]\nmkdir PATH\nrm PATH\nrmdir PATH\nsync\nshutdown\n"
     );
 }
 
@@ -174,29 +174,6 @@ fn failed_cat_and_ls_preserve_an_existing_directory_cwd() {
 }
 
 #[test]
-fn mutation_commands_are_unavailable_without_accessing_the_vfs() {
-    let mut shell = Shell::new(Vfs::new(PanicFileSystem), Recorder(Vec::new(), 0));
-
-    for command in [
-        "touch file",
-        "write file text",
-        "append file text",
-        "mkdir dir",
-        "rm file",
-        "rmdir dir",
-        "sync",
-        "shutdown",
-    ] {
-        shell.run(command).unwrap();
-    }
-
-    assert_eq!(
-        shell.output().0,
-        b"error: command unavailable\nerror: command unavailable\nerror: command unavailable\nerror: command unavailable\nerror: command unavailable\nerror: command unavailable\nerror: command unavailable\nerror: command unavailable\n"
-    );
-}
-
-#[test]
 fn cat_writes_a_file_larger_than_one_vfs_buffer() {
     let contents = vec![b'x'; 8193];
     let mut shell = fixture_shell(&[("large", &contents)]);
@@ -206,8 +183,6 @@ fn cat_writes_a_file_larger_than_one_vfs_buffer() {
     assert_eq!(shell.output().0, contents);
     assert!(shell.output().1 > 1);
 }
-
-struct PanicFileSystem;
 
 fn fixture_root() -> NodeId {
     let image = fixture_with_files(&[]).unwrap();
@@ -240,27 +215,5 @@ impl FileSystem for ErrorFileSystem {
 
     fn read_at(&mut self, _: NodeId, _: u64, _: &mut [u8]) -> Result<usize, FsError> {
         Err(self.error)
-    }
-}
-
-impl FileSystem for PanicFileSystem {
-    fn root(&self) -> NodeId {
-        panic!("unavailable command accessed the filesystem")
-    }
-
-    fn metadata(&mut self, _: NodeId) -> Result<Metadata, FsError> {
-        panic!("unavailable command accessed the filesystem")
-    }
-
-    fn lookup(&mut self, _: NodeId, _: &Name) -> Result<NodeId, FsError> {
-        panic!("unavailable command accessed the filesystem")
-    }
-
-    fn read_dir(&mut self, _: NodeId) -> Result<Vec<DirEntry>, FsError> {
-        panic!("unavailable command accessed the filesystem")
-    }
-
-    fn read_at(&mut self, _: NodeId, _: u64, _: &mut [u8]) -> Result<usize, FsError> {
-        panic!("unavailable command accessed the filesystem")
     }
 }
