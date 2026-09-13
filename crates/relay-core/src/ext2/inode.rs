@@ -9,16 +9,71 @@ use super::{
 };
 
 const PROFILE_INODES: u32 = 4_096;
-const INODE_BYTES: usize = 256;
-const DIRECT_BLOCKS: u32 = 12;
-const INDIRECT_BLOCKS: u32 = 1_024;
-const MAX_FILE_BYTES: u64 = ((DIRECT_BLOCKS + INDIRECT_BLOCKS) as usize * BLOCK_BYTES) as u64;
+pub(super) const INODE_BYTES: usize = 256;
+pub(super) const DIRECT_BLOCKS: u32 = 12;
+pub(super) const INDIRECT_BLOCKS: u32 = 1_024;
+pub(super) const MAX_FILE_BYTES: u64 =
+    ((DIRECT_BLOCKS + INDIRECT_BLOCKS) as usize * BLOCK_BYTES) as u64;
 const S_IFMT: u16 = 0xf000;
 const S_IFREG: u16 = 0x8000;
 const S_IFDIR: u16 = 0x4000;
 
+pub(super) fn store<D: BlockDevice>(
+    fs: &mut Ext2<D>,
+    node: NodeId,
+    inode: &Inode,
+) -> Result<(), Ext2Error> {
+    if !(2..=PROFILE_INODES).contains(&node.0) {
+        return Err(Ext2Error::InvalidNode);
+    }
+    let inode_offset = usize::try_from(node.0 - 1)
+        .ok()
+        .and_then(|index| index.checked_mul(INODE_BYTES))
+        .ok_or(Ext2Error::CorruptMetadata {
+            field: "inode_offset",
+        })?;
+    let table_block =
+        u32::try_from(inode_offset / BLOCK_BYTES).map_err(|_| Ext2Error::CorruptMetadata {
+            field: "inode_offset",
+        })?;
+    if table_block >= fs.geometry.inode_table_blocks {
+        return Err(Ext2Error::CorruptMetadata {
+            field: "inode_table",
+        });
+    }
+    let block =
+        fs.geometry
+            .inode_table
+            .checked_add(table_block)
+            .ok_or(Ext2Error::CorruptMetadata {
+                field: "inode_table",
+            })?;
+    let mut bytes = [0; BLOCK_BYTES];
+    fs.read_block(block, &mut bytes)
+        .inspect_err(|_| fs.poison())?;
+    let start = inode_offset % BLOCK_BYTES;
+    let end = start
+        .checked_add(INODE_BYTES)
+        .ok_or(Ext2Error::CorruptMetadata {
+            field: "inode_offset",
+        })?;
+    let slot = bytes
+        .get_mut(start..end)
+        .ok_or(Ext2Error::CorruptMetadata {
+            field: "inode_offset",
+        })?;
+    slot.copy_from_slice(&inode.bytes);
+    let owned = bytes;
+    fs.write_block(block, &owned)?;
+    fs.device.flush().map_err(|error| {
+        fs.poison();
+        Ext2Error::Block(error)
+    })?;
+    Ok(())
+}
+
 pub(super) struct Inode {
-    bytes: [u8; INODE_BYTES],
+    pub(super) bytes: [u8; INODE_BYTES],
 }
 
 impl Inode {

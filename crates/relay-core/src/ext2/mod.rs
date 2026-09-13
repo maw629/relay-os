@@ -1,5 +1,7 @@
+mod allocator;
 mod directory;
 mod inode;
+mod mutation;
 mod on_disk;
 mod validate;
 
@@ -90,7 +92,9 @@ impl<D: BlockDevice> Ext2<D> {
     }
 
     fn poison(&mut self) {
-        self.health = MountHealth::WriteFailed;
+        if self.health == MountHealth::Writable {
+            self.health = MountHealth::WriteFailed;
+        }
     }
 
     fn write_block(&mut self, block: u32, bytes: &[u8; BLOCK_BYTES]) -> Result<(), Ext2Error> {
@@ -133,54 +137,32 @@ impl<D: BlockDevice> Ext2<D> {
 
     pub fn create_file(&mut self, parent: NodeId, name: &Name) -> Result<NodeId, Ext2Error> {
         self.require_writable()?;
-        let _ = (parent, name);
-        self.probe_write_path()?;
-        Err(Ext2Error::UnsupportedFile)
+        mutation::create_file(self, parent, name)
     }
 
     pub fn create_dir(&mut self, parent: NodeId, name: &Name) -> Result<NodeId, Ext2Error> {
         self.require_writable()?;
-        let _ = (parent, name);
-        self.probe_write_path()?;
-        Err(Ext2Error::UnsupportedFile)
+        mutation::create_dir(self, parent, name)
     }
 
     pub fn write_at(&mut self, node: NodeId, offset: u64, src: &[u8]) -> Result<(), Ext2Error> {
         self.require_writable()?;
-        let _ = (node, offset, src);
-        self.probe_write_path()?;
-        Err(Ext2Error::UnsupportedFile)
+        mutation::write_at(self, node, offset, src)
     }
 
     pub fn truncate(&mut self, node: NodeId, len: u64) -> Result<(), Ext2Error> {
         self.require_writable()?;
-        let _ = (node, len);
-        self.probe_write_path()?;
-        Err(Ext2Error::UnsupportedFile)
+        mutation::truncate(self, node, len)
     }
 
     pub fn unlink_file(&mut self, parent: NodeId, name: &Name) -> Result<(), Ext2Error> {
         self.require_writable()?;
-        let _ = (parent, name);
-        self.probe_write_path()?;
-        Err(Ext2Error::UnsupportedFile)
+        mutation::unlink_file(self, parent, name)
     }
 
     pub fn remove_dir(&mut self, parent: NodeId, name: &Name) -> Result<(), Ext2Error> {
         self.require_writable()?;
-        let _ = (parent, name);
-        self.probe_write_path()?;
-        Err(Ext2Error::UnsupportedFile)
-    }
-
-    // Task 1 scaffold, replaced by real mutation in Tasks 2 and 3: re-write
-    // block 0 with byte-identical contents through `write_block` so that
-    // fault-injected writes still poison the mount (see the `ext2_files`
-    // poison test). The rewrite changes no media state.
-    fn probe_write_path(&mut self) -> Result<(), Ext2Error> {
-        let mut bytes = [0; BLOCK_BYTES];
-        self.read_block(0, &mut bytes)?;
-        self.write_block(0, &bytes)
+        mutation::remove_dir(self, parent, name)
     }
 
     fn require_readable(&self) -> Result<(), Ext2Error> {
