@@ -138,7 +138,7 @@ pub(super) fn create_file<D: BlockDevice>(
 ) -> Result<NodeId, Ext2Error> {
     fs.require_writable()?;
     let parent_inode = inode::load(fs, parent)?;
-    if parent_inode.metadata().kind != NodeKind::Directory {
+    if parent_inode.metadata()?.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
     match directory::lookup(fs, parent, name) {
@@ -163,7 +163,7 @@ pub(super) fn create_dir<D: BlockDevice>(
 ) -> Result<NodeId, Ext2Error> {
     fs.require_writable()?;
     let parent_inode = inode::load(fs, parent)?;
-    if parent_inode.metadata().kind != NodeKind::Directory {
+    if parent_inode.metadata()?.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
     match directory::lookup(fs, parent, name) {
@@ -270,7 +270,7 @@ fn adjust_parent_links<D: BlockDevice>(
 ) -> Result<(), Ext2Error> {
     fs.require_writable()?;
     let image = inode::load(fs, parent)?;
-    if image.metadata().kind != NodeKind::Directory {
+    if image.metadata()?.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
     let links = on_disk::u16(&image.bytes, on_disk::INODE_LINKS, "inode_links")?;
@@ -299,13 +299,13 @@ pub(super) fn write_at<D: BlockDevice>(
     fs.require_writable()?;
     let end = check_end(offset, src.len())?;
     let image = inode::load(fs, node)?;
-    if image.metadata().kind != NodeKind::Regular {
+    if image.metadata()?.kind != NodeKind::Regular {
         return Err(Ext2Error::WrongNodeKind);
     }
     if src.is_empty() {
         return Ok(());
     }
-    let old_size = image.metadata().len;
+    let old_size = image.metadata()?.len;
     let new_size = old_size.max(end);
     let needed = ceil_blocks(new_size)?;
     if needed > inode::DIRECT_BLOCKS + inode::INDIRECT_BLOCKS {
@@ -556,10 +556,10 @@ pub(super) fn truncate<D: BlockDevice>(
         return Err(Ext2Error::FileTooLarge);
     }
     let image = inode::load(fs, node)?;
-    if image.metadata().kind != NodeKind::Regular {
+    if image.metadata()?.kind != NodeKind::Regular {
         return Err(Ext2Error::WrongNodeKind);
     }
-    let old_size = image.metadata().len;
+    let old_size = image.metadata()?.len;
     if len == old_size {
         return Ok(());
     }
@@ -677,7 +677,7 @@ fn shrink<D: BlockDevice>(
     }
     let mut freed_data = [0; 1036];
     let mut freed_count = 0;
-    for logical in keep..ceil_blocks(image.metadata().len)? {
+    for logical in keep..ceil_blocks(image.metadata()?.len)? {
         let block = if logical < inode::DIRECT_BLOCKS {
             direct[usize::try_from(logical).map_err(|_| Ext2Error::CorruptMetadata {
                 field: "logical_block",
@@ -788,7 +788,7 @@ pub(super) fn unlink_file<D: BlockDevice>(
     fs.require_writable()?;
     let child = directory::lookup(fs, parent, name)?;
     let child_image = inode::load(fs, child)?;
-    if child_image.metadata().kind != NodeKind::Regular {
+    if child_image.metadata()?.kind != NodeKind::Regular {
         return Err(Ext2Error::WrongNodeKind);
     }
     let removed = directory::remove(fs, parent, name)?;
@@ -847,7 +847,7 @@ pub(super) fn remove_dir<D: BlockDevice>(
         return Err(Ext2Error::WrongNodeKind);
     }
     let child_image = inode::load(fs, child)?;
-    if child_image.metadata().kind != NodeKind::Directory {
+    if child_image.metadata()?.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
     if !directory::read_dir(fs, child)?.is_empty() {

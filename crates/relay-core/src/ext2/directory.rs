@@ -21,7 +21,7 @@ pub(super) fn insert<D: BlockDevice>(
 ) -> Result<(), Ext2Error> {
     fs.require_writable()?;
     let parent_inode = inode::load(fs, parent)?;
-    if parent_inode.metadata().kind != NodeKind::Directory {
+    if parent_inode.metadata()?.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
     let name_bytes = name.as_bytes();
@@ -42,7 +42,7 @@ pub(super) fn insert<D: BlockDevice>(
         NodeKind::Regular => DIRECTORY_FILETYPE_REGULAR,
         NodeKind::Directory => DIRECTORY_FILETYPE_DIRECTORY,
     };
-    let parent_meta = parent_inode.metadata();
+    let parent_meta = parent_inode.metadata()?;
     let blocks = u32::try_from(parent_meta.len.div_ceil(BLOCK_BYTES as u64)).map_err(|_| {
         Ext2Error::CorruptMetadata {
             field: "directory_length",
@@ -206,7 +206,7 @@ pub(super) fn insert<D: BlockDevice>(
     flush(fs)?;
     // Grow the parent size and block count.
     let mut parent_image = inode::load(fs, parent)?;
-    let old_len = parent_image.metadata().len;
+    let old_len = parent_image.metadata()?.len;
     let new_len = old_len
         .checked_add(BLOCK_BYTES as u64)
         .ok_or(Ext2Error::CorruptMetadata {
@@ -266,11 +266,11 @@ pub(super) fn remove<D: BlockDevice>(
 ) -> Result<NodeId, Ext2Error> {
     fs.require_writable()?;
     let parent_inode = inode::load(fs, parent)?;
-    if parent_inode.metadata().kind != NodeKind::Directory {
+    if parent_inode.metadata()?.kind != NodeKind::Directory {
         return Err(Ext2Error::WrongNodeKind);
     }
     let wanted = name.as_bytes();
-    let parent_meta = parent_inode.metadata();
+    let parent_meta = parent_inode.metadata()?;
     let blocks = u32::try_from(parent_meta.len.div_ceil(BLOCK_BYTES as u64)).map_err(|_| {
         Ext2Error::CorruptMetadata {
             field: "directory_length",
