@@ -240,6 +240,10 @@ pub fn fixture_with_feature(field: FeatureField, bit: u32) -> Result<Ext2Fixture
 }
 
 impl Ext2Fixture {
+    pub fn path(&self) -> &Path {
+        &self.image
+    }
+
     pub fn open(&self) -> std::io::Result<FileDevice> {
         FileDevice::open(&self.image)
     }
