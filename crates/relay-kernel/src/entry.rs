@@ -29,6 +29,40 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
     }
     // SAFETY: the static bounded heap is initialized once before any allocation is attempted.
     unsafe { crate::ALLOCATOR.initialize() };
+    // SAFETY: `valid_boot_info` established this BootInfo and its RSDP field.
+    match unsafe { crate::pci::probe(&*info) } {
+        Ok(platform) => {
+            let line = alloc::format!(
+                "[relay] phase=platform-probe status=ok mcfg_base={:#x} bus={}-{} xhci={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} dmar={}\n",
+                platform.region.base,
+                platform.region.bus_start,
+                platform.region.bus_end,
+                platform.xhci.bus,
+                platform.xhci.device,
+                platform.xhci.function,
+                platform.bar.base,
+                platform.bar.size,
+                platform.bar.is_64 as u8,
+                platform.caps.max_slots,
+                platform.caps.max_ports,
+                platform.caps.context_64 as u8,
+                platform.caps.addr_64 as u8,
+                platform.caps.scratchpad_count,
+                platform.caps.legacy_owned as u8,
+                platform.caps.usb2_bdf_range.0,
+                platform.caps.usb2_bdf_range.1,
+                platform.caps.usb3_bdf_range.0,
+                platform.caps.usb3_bdf_range.1,
+                platform.dmar as u8,
+            );
+            crate::console::write(line.as_bytes());
+        }
+        Err(error) => {
+            let line = alloc::format!("[relay] phase=platform-probe status={}\n", error.status());
+            crate::console::write(line.as_bytes());
+            crate::arch::x86_64::halt();
+        }
+    }
     crate::console::write(b"[relay] phase=kernel-entry status=ok\n");
     crate::console::write(b"[relay] phase=kernel-runtime status=ok\n");
     crate::arch::x86_64::halt();

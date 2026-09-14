@@ -259,18 +259,23 @@ pub fn decode_xhci_caps(header: &[u8; 32], ext: &[u8]) -> XhciCaps {
         let mut offset = xecp * 4;
         for _ in 0..32 {
             let dword = read_ext(ext, offset);
-            let next = (dword & 0xFF) as usize;
-            let id = ((dword >> 8) & 0xFF) as u8;
+            // Extended-capability header per xHCI section 7: capability ID
+            // in bits 7:0, next-capability stride in DWORDs in bits 15:8,
+            // minor/major protocol revision in bits 23:16/31:24 for
+            // Supported Protocol entries (Linux XHCI_EXT_CAPS_{ID,NEXT,VAL}
+            // and the QEMU qemu-xhci model agree on this split).
+            let next = ((dword >> 8) & 0xFF) as usize;
+            let id = (dword & 0xFF) as u8;
             match id {
                 1 => {
-                    let sup = read_ext(ext, offset + 4);
-                    if (sup >> 16) & 0x1 != 0 || (sup >> 24) & 0x1 != 0 {
+                    // USBLEGSUP occupies this same header DWORD: bit 16 is
+                    // the BIOS-owned semaphore, bit 24 the OS-owned one.
+                    if (dword >> 16) & 0x1 != 0 || (dword >> 24) & 0x1 != 0 {
                         legacy_owned = true;
                     }
                 }
                 2 => {
-                    let rev = read_ext(ext, offset + 4) & 0xFFFF;
-                    let major = ((rev >> 8) & 0xFF) as u8;
+                    let major = ((dword >> 24) & 0xFF) as u8;
                     let port = read_ext(ext, offset + 8);
                     let range = ((port & 0xFF) as u8, ((port >> 8) & 0xFF) as u8);
                     if major == 2 && usb2 == (0, 0) {

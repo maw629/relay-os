@@ -295,16 +295,18 @@ fn caps_decode_reports_slots_ports_width_and_protocols() {
     header[8..12].copy_from_slice(&0x0000_0042u32.to_le_bytes());
     header[16..20].copy_from_slice(&0x0001_2205u32.to_le_bytes());
     let mut ext = vec![0; 64];
-    ext[4..8].copy_from_slice(&0x0000_0204u32.to_le_bytes());
-    ext[8..10].copy_from_slice(&0x0200u16.to_le_bytes());
-    ext[12] = 1;
-    ext[13] = 2;
-    ext[20..24].copy_from_slice(&0x0000_0204u32.to_le_bytes());
-    ext[24..26].copy_from_slice(&0x0310u16.to_le_bytes());
-    ext[28] = 3;
+    // Extended-capability header layout per xHCI section 7: ID in bits 7:0,
+    // next stride in DWORDs in bits 15:8, major revision in bits 31:24.
+    // Vectors mirror the real QEMU qemu-xhci,p2=2,p3=2 protocol caps.
+    ext[4..8].copy_from_slice(&0x0001_0401u32.to_le_bytes());
+    ext[20..24].copy_from_slice(&0x0200_0402u32.to_le_bytes());
+    ext[24..28].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    ext[28] = 1;
     ext[29] = 2;
-    ext[36..40].copy_from_slice(&0x0000_0100u32.to_le_bytes());
-    ext[40..44].copy_from_slice(&0x0300_0000u32.to_le_bytes());
+    ext[36..40].copy_from_slice(&0x0300_0002u32.to_le_bytes());
+    ext[40..44].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    ext[44] = 3;
+    ext[45] = 2;
     let caps = decode_xhci_caps(&header, &ext);
     assert_eq!(caps.cap_length, 32);
     assert_eq!(caps.interface_version, 0x0100);

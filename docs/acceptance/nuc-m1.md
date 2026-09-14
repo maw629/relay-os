@@ -48,3 +48,42 @@ The banner photo visibly contains both required Task 5 lines:
 [relay] phase=kernel-entry status=ok
 [relay] phase=kernel-runtime status=ok
 ```
+
+## Task 11 Platform Probe
+
+QEMU-observed values come from `target/qemu/serial.log` after
+`cargo xtask qemu boot target/relay-os.img --display none --accel tcg`
+with `-device qemu-xhci,p2=2,p3=2`. Full marker line:
+
+```text
+[relay] phase=platform-probe status=ok mcfg_base=0xe0000000 bus=0-255 xhci=00:03.0 bar_base=0xc000000000 bar_size=0x4000 bar64=1 slots=64 ports=4 ctx64=0 addr64=1 scratch=0 legacy=0 usb2_off=3 usb2_count=2 usb3_off=1 usb3_count=2 dmar=0
+```
+
+| Field | QEMU observed | NUC target |
+| --- | --- | --- |
+| MCFG base | `0xe0000000` | pending physical probe |
+| MCFG bus range | `0-255` | pending physical probe |
+| xHCI BDF | `00:03.0` | pending physical probe |
+| BAR width/address/size | 64-bit / `0xc000000000` / `0x4000` | pending physical probe |
+| Context size / addr width | 32-byte contexts (`ctx64=0`) / 64-bit capable (`addr64=1`) | pending physical probe |
+| Scratchpad count | `0` | pending physical probe |
+| Legacy ownership bits | `0` (no USB-legacy extended capability) | pending physical probe |
+| USB2/USB3 protocol ranges | USB2 `3:2` / USB3 `1:2` (see note) | pending physical probe |
+| VT-d firmware state + DMAR | `dmar=0` (no DMAR table under QEMU/OVMF) | pending physical probe |
+
+Note on the USB2/USB3 ranges: QEMU numbers the USB3 ports first
+(PORTSC offsets 1-2 are USB3, offsets 3-4 are USB2), so the Supported
+Protocol capabilities report USB2 `off=3 count=2` and USB3 `off=1
+count=2`. Together they cover all four ports with the configured
+`p2=2,p3=2` counts and no overlap, which is the topology cross-check.
+An earlier draft of this table expected USB2 `1:2` / USB3 `3:2`
+(USB2-first ordering); the live QEMU ext-cap dump plus the QEMU
+`qemu-xhci` model source show USB3-first is what the hardware reports,
+so the expectation was corrected to match the device.
+
+Byte-position field legend: `usb2_off`/`usb2_count` and
+`usb3_off`/`usb3_count` come straight from the Supported Protocol
+capability dwords. Do not proceed to BOT storage work on the NUC until
+this table's NUC column is filled. If VT-d translation blocks DMA
+there, stop and get explicit design approval before adding an
+identity-mapped DMA domain or requiring VT-d disabled in firmware.

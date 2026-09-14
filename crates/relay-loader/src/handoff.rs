@@ -65,9 +65,9 @@ pub fn boot() -> Result<(), HandoffError> {
         .map_identity_allocation(boot_data)
         .map_err(|_| HandoffError::Paging)?;
 
-    let usable_map = boot::memory_map(MemoryType::LOADER_DATA).map_err(|_| HandoffError::Memory)?;
-    for descriptor in usable_map.entries() {
-        if descriptor.ty == MemoryType::CONVENTIONAL {
+    let direct_map = boot::memory_map(MemoryType::LOADER_DATA).map_err(|_| HandoffError::Memory)?;
+    for descriptor in direct_map.entries() {
+        if is_direct_mapped(descriptor.ty) {
             let end = descriptor
                 .phys_start
                 .checked_add(
@@ -82,7 +82,7 @@ pub fn boot() -> Result<(), HandoffError> {
                 .map_err(|_| HandoffError::Paging)?;
         }
     }
-    drop(usable_map);
+    drop(direct_map);
 
     for segment in &kernel.segments {
         tables
@@ -134,6 +134,25 @@ fn halt() -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+/// RAM the kernel reaches through the direct physical map: usable memory,
+/// the loader's own retained pages (page tables the runtime MMIO installer
+/// walks, boot data, kernel image), boot-services memory freed by
+/// ExitBootServices, and the firmware ACPI/runtime tables the platform
+/// probe reads. MMIO, NVS, reserved, and unusable ranges stay unmapped so
+/// stray direct-map accesses fault instead of silently hitting devices.
+fn is_direct_mapped(ty: MemoryType) -> bool {
+    matches!(
+        ty,
+        MemoryType::CONVENTIONAL
+            | MemoryType::LOADER_DATA
+            | MemoryType::BOOT_SERVICES_CODE
+            | MemoryType::BOOT_SERVICES_DATA
+            | MemoryType::RUNTIME_SERVICES_CODE
+            | MemoryType::RUNTIME_SERVICES_DATA
+            | MemoryType::ACPI_RECLAIM
+    )
 }
 
 fn capture_framebuffer() -> Result<FramebufferInfo, HandoffError> {

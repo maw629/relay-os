@@ -1,10 +1,13 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 mod allocator;
 mod arch;
 mod console;
 mod entry;
+mod pci;
 mod serial;
 
 #[global_allocator]
