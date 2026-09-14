@@ -323,3 +323,30 @@ fn caps_decode_reports_slots_ports_width_and_protocols() {
     assert_eq!(plain.usb3_bdf_range, (0, 0));
     assert!(!plain.legacy_owned);
 }
+
+#[test]
+fn caps_decode_handles_usb3_first_ordering() {
+    let mut header = [0; 32];
+    header[0] = 32;
+    header[2..4].copy_from_slice(&0x0100u16.to_le_bytes());
+    header[4..8].copy_from_slice(&0x0400_0008u32.to_le_bytes());
+    header[8..12].copy_from_slice(&0x0000_0042u32.to_le_bytes());
+    header[16..20].copy_from_slice(&0x0001_2205u32.to_le_bytes());
+    let mut ext = vec![0; 64];
+    // Same spec layout as the USB2-first vector, but with the USB3
+    // Supported Protocol capability chained before the USB2 one and the
+    // legacy (ID 1) capability last. Mirrors live QEMU qemu-xhci ordering.
+    ext[4..8].copy_from_slice(&0x0300_0402u32.to_le_bytes());
+    ext[8..12].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    ext[12] = 1;
+    ext[13] = 2;
+    ext[20..24].copy_from_slice(&0x0200_0402u32.to_le_bytes());
+    ext[24..28].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    ext[28] = 3;
+    ext[29] = 2;
+    ext[36..40].copy_from_slice(&0x0101_0001u32.to_le_bytes());
+    let caps = decode_xhci_caps(&header, &ext);
+    assert_eq!(caps.usb2_bdf_range, (3, 2));
+    assert_eq!(caps.usb3_bdf_range, (1, 2));
+    assert!(caps.legacy_owned);
+}
