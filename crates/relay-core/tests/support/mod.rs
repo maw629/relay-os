@@ -6,3 +6,5 @@ pub mod file_device;
 pub mod memory_device;
 #[allow(dead_code)]
 pub mod power_cut_device;
+#[allow(dead_code)]
+pub mod vec_memory;
