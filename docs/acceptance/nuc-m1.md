@@ -59,17 +59,26 @@ with `-device qemu-xhci,p2=2,p3=2`. Full marker line:
 [relay] phase=platform-probe status=ok mcfg_base=0xe0000000 bus=0-255 xhci=00:03.0 bar_base=0xc000000000 bar_size=0x4000 bar64=1 slots=64 ports=4 ctx64=0 addr64=1 scratch=0 legacy=0 usb2_off=3 usb2_count=2 usb3_off=1 usb3_count=2 dmar=0
 ```
 
-| Field | QEMU observed | NUC target |
+| Field | QEMU observed | NUC observed (2026-09-14 physical probe) |
 | --- | --- | --- |
-| MCFG base | `0xe0000000` | pending physical probe |
-| MCFG bus range | `0-255` | pending physical probe |
-| xHCI BDF | `00:03.0` | pending physical probe |
-| BAR width/address/size | 64-bit / `0xc000000000` / `0x4000` | pending physical probe |
-| Context size / addr width | 32-byte contexts (`ctx64=0`) / 64-bit capable (`addr64=1`) | pending physical probe |
-| Scratchpad count | `0` | pending physical probe |
-| Legacy ownership bits | `0` (no USB-legacy extended capability) | pending physical probe |
-| USB2/USB3 protocol ranges | USB2 `3:2` / USB3 `1:2` (see note) | pending physical probe |
-| VT-d firmware state + DMAR | `dmar=0` (no DMAR table under QEMU/OVMF) | pending physical probe |
+| MCFG base | `0xe0000000` | `0xc0000000` |
+| MCFG bus range | `0-255` | `0-255` |
+| xHCI BDF | `00:03.0` | primary `00:14.0` (candidates `00:0d.0` + `00:14.0`) |
+| BAR width/address/size | 64-bit / `0xc000000000` / `0x4000` | primary 64-bit / `0x603d180000` / `0x10000`; secondary 64-bit / `0x603d190000` / `0x10000` |
+| Context size / addr width | 32-byte contexts (`ctx64=0`) / 64-bit capable (`addr64=1`) | 32-byte contexts (`ctx64=0`) / 64-bit capable (`addr64=1`) |
+| Scratchpad count | `0` | `128` |
+| Legacy ownership bits | `0` (no USB-legacy extended capability) | `0` |
+| USB2/USB3 protocol ranges | USB2 `3:2` / USB3 `1:2` (see note) | primary USB2 `1:12` / USB3 `13:4`; secondary USB2 `1:1` / USB3 `2:3` (see NUC cross-check note) |
+| VT-d firmware state + DMAR | `dmar=0` (no DMAR table under QEMU/OVMF) | `dmar=1` (VT-d Enabled in firmware) |
+
+NUC physical probe evidence (2026-09-14 boot, operator `maw629`):
+flashed image SHA-256 `9048d0e6d44ce261395cdd9f60b5f7238f6f3d8194f20acbf1740ca3b6c83513`;
+banner photo `relay-os-artifacts/evidence/20260914-062324-921aabd9-20260914_132232.jpg`
+SHA-256 `407091bde19a515637155425c26928276d4910ceaf71af60c2ac099fb4d49dfa`.
+
+NUC cross-check note: the primary ranges match Linux `usb3`/`usb4`
+(12+4 ports) and the secondary ranges match Linux `usb1`/`usb2` (1+3
+ports); keyboard + DataTraveler verified behind `00:14.0`.
 
 Note on the USB2/USB3 ranges: QEMU numbers the USB3 ports first
 (PORTSC offsets 1-2 are USB3, offsets 3-4 are USB2), so the Supported
