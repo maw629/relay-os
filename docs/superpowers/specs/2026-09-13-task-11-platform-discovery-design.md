@@ -217,6 +217,15 @@ the multifunction bit (scan all 8 functions when set, else function 0
 only), and read the class DWORD at `0x08`. Config-space transport
 failures map to `Transport`.
 
+Multi-controller policy: `find_xhci_controllers` returns every matching
+endpoint sorted ascending by BDF `(bus, device, function)`; the kernel
+probe records the full candidate list and brings up the lowest-BDF entry
+as primary. The lowest-BDF heuristic selects the Intel PCH xHCI (e.g.
+`00:14.0`) over higher-bus Thunderbolt/USB4 controllers, matching the
+single-target M1 profile; Task 13 enumeration remains the backstop for
+bringing up secondary controllers. Both BDFs are recorded in the probe
+marker (`xhci` primary plus `xhci_all` candidate list) as evidence.
+
 `probe_xhci_bar` targets BAR0 (`0x10`, plus `0x14` when 64-bit) with this
 exact order, restoring saved registers on every return path:
 

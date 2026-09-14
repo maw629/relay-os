@@ -147,7 +147,7 @@ fn map_transport(_: PciError) -> PciError {
     PciError::Transport
 }
 
-pub fn find_xhci(config: &impl PciConfig) -> Result<PciAddress, PciError> {
+pub fn find_xhci_controllers(config: &impl PciConfig) -> Result<Vec<PciAddress>, PciError> {
     let mut candidates = Vec::new();
     for (address, code) in &enumerate_functions(config)? {
         if *code != XHCI_CLASS {
@@ -162,9 +162,15 @@ pub fn find_xhci(config: &impl PciConfig) -> Result<PciAddress, PciError> {
             .map_err(|_| PciError::Allocation)?;
         candidates.push(*address);
     }
+    candidates.sort_by_key(|address| (address.bus, address.device, address.function));
+    Ok(candidates)
+}
+
+pub fn find_xhci(config: &impl PciConfig) -> Result<PciAddress, PciError> {
+    let mut candidates = find_xhci_controllers(config)?;
     match candidates.len() {
         0 => Err(PciError::NoXhci),
-        1 => Ok(candidates[0]),
+        1 => Ok(candidates.pop().unwrap()),
         _ => Err(PciError::MultipleXhci),
     }
 }

@@ -1,11 +1,12 @@
+use alloc::vec::Vec;
 use relay_abi::BootInfo;
 use relay_core::{
     acpi::{McfgRegion, PhysicalMemory, dmar_present, parse_mcfg},
     dma::DmaError,
     mmio::MapError,
     pci::{
-        BarInfo, PciAddress, PciConfig, PciError, XhciCaps, decode_xhci_caps, find_xhci,
-        probe_xhci_bar,
+        BarInfo, PciAddress, PciConfig, PciError, XhciCaps, decode_xhci_caps,
+        find_xhci_controllers, probe_xhci_bar,
     },
 };
 
@@ -83,6 +84,7 @@ impl PciConfig for EcamAccess {
 pub struct PlatformInfo {
     pub region: McfgRegion,
     pub xhci: PciAddress,
+    pub xhci_all: Vec<PciAddress>,
     pub bar: BarInfo,
     pub caps: XhciCaps,
     pub dmar: bool,
@@ -122,7 +124,10 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
         mapped: ecam,
         region,
     };
-    let xhci = find_xhci(&config).map_err(ProbeError::Pci)?;
+    let candidates = find_xhci_controllers(&config).map_err(ProbeError::Pci)?;
+    let Some(xhci) = candidates.first().copied() else {
+        return Err(ProbeError::Pci(PciError::NoXhci));
+    };
     let bar = probe_xhci_bar(&config, xhci).map_err(ProbeError::Pci)?;
     let bar_len = usize::try_from(bar.size).map_err(|_| ProbeError::Map(MapError::InvalidRange))?;
     let bar_ptr = mmio::map_uncached(bar.base, bar_len).map_err(ProbeError::Map)?;
@@ -132,6 +137,7 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
     Ok(PlatformInfo {
         region,
         xhci,
+        xhci_all: candidates,
         bar,
         caps,
         dmar,

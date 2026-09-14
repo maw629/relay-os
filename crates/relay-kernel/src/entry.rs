@@ -62,8 +62,20 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
     // SAFETY: `valid_boot_info` established this BootInfo and its RSDP field.
     match unsafe { crate::pci::probe(&*info) } {
         Ok(platform) => {
+            let mut xhci_all = alloc::string::String::new();
+            for (index, addr) in platform.xhci_all.iter().enumerate() {
+                if index > 0 {
+                    xhci_all.push(',');
+                }
+                xhci_all.push_str(&alloc::format!(
+                    "{:02x}:{:02x}.{}",
+                    addr.bus,
+                    addr.device,
+                    addr.function
+                ));
+            }
             let line = alloc::format!(
-                "[relay] phase=platform-probe status=ok mcfg_base={:#x} bus={}-{} xhci={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} dmar={}\n",
+                "[relay] phase=platform-probe status=ok mcfg_base={:#x} bus={}-{} xhci={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} dmar={} xhci_all={}\n",
                 platform.region.base,
                 platform.region.bus_start,
                 platform.region.bus_end,
@@ -84,6 +96,7 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
                 platform.caps.usb3_bdf_range.0,
                 platform.caps.usb3_bdf_range.1,
                 platform.dmar as u8,
+                xhci_all,
             );
             crate::console::write(line.as_bytes());
         }

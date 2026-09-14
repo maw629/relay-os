@@ -1,6 +1,6 @@
 use relay_core::pci::{
     BarInfo, McfgRegion, PciAddress, PciConfig, PciError, decode_xhci_caps, ecam_address,
-    enumerate_functions, find_xhci, probe_xhci_bar,
+    enumerate_functions, find_xhci, find_xhci_controllers, probe_xhci_bar,
 };
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -284,6 +284,24 @@ fn find_xhci_matches_single_endpoint_controller() {
     bridge.set(XHCI, 0x08, 0x0C03_3000);
     bridge.set(XHCI, 0x0C, 0x0001_0000);
     assert_eq!(find_xhci(&bridge), Err(PciError::NoXhci));
+}
+
+#[test]
+fn find_lists_all_controllers_sorted() {
+    let config = RecordingPciConfig::new();
+    // Insert in reverse BDF order; the list must come back sorted ascending.
+    for addr in [address(0, 20, 0), address(0, 5, 0)] {
+        config.set(addr, 0x00, 0x1234_5678);
+        config.set(addr, 0x08, 0x0C03_3000);
+        config.set(addr, 0x0C, 0x0000_0000);
+    }
+    assert_eq!(
+        find_xhci_controllers(&config),
+        Ok(vec![address(0, 5, 0), address(0, 20, 0)])
+    );
+
+    let empty = RecordingPciConfig::new();
+    assert_eq!(find_xhci_controllers(&empty), Ok(vec![]));
 }
 
 #[test]
