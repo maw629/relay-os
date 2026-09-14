@@ -5,6 +5,7 @@ use relay_abi::{BootInfo, MemoryRegion};
 pub const PHYSICAL_MEMORY_OFFSET: u64 = 0xffff_8000_0000_0000;
 const PAGE_SIZE: u64 = 4096;
 const MEMORY_REGION_USABLE: u32 = 1;
+const MAX_DIRECT_MAPPED_PHYSICAL_PLUS_ONE: u64 = 0x8000_0000_0000;
 
 pub struct PhysicalFrameAllocator {
     regions: &'static [MemoryRegion],
@@ -88,6 +89,11 @@ impl PhysicalFrameAllocator {
             }
             let frame = self.next;
             self.next += PAGE_SIZE;
+            if frame == 0 {
+                // Physical page zero holds the real-mode IVT and doubles as
+                // the walker's corrupt-entry sentinel; never hand it out.
+                continue;
+            }
             if overlaps((frame, frame + PAGE_SIZE), self.boot_info)
                 || overlaps((frame, frame + PAGE_SIZE), self.memory_map)
             {
@@ -101,6 +107,28 @@ impl PhysicalFrameAllocator {
 
 fn overlaps(left: (u64, u64), right: (u64, u64)) -> bool {
     left.0 < right.1 && right.0 < left.1
+}
+
+/// Returns one usable frame, skipping retained boot structures.
+/// Single-core boot discipline makes locking unnecessary.
+pub fn allocate_frame() -> Option<u64> {
+    // SAFETY: called only on the boot core before any concurrent user exists,
+    // and the allocator was initialized once from validated handoff data.
+    unsafe { (*FRAME_ALLOCATOR.0.get()).as_mut()?.allocate_frame() }
+}
+
+/// Bounds-checked direct-map slice for DMA fills and table access.
+/// Returns None instead of faulting on out-of-range requests.
+pub fn direct_slice_mut(physical: u64, len: usize) -> Option<&'static mut [u8]> {
+    let end = physical.checked_add(len as u64)?;
+    if len == 0 || end - 1 > MAX_DIRECT_MAPPED_PHYSICAL_PLUS_ONE - 1 {
+        return None;
+    }
+    let virt = physical.checked_add(PHYSICAL_MEMORY_OFFSET)?;
+    // SAFETY: bounds were checked against the direct-map ceiling and the
+    // caller owns the frames it fills; lifetime is static because physical
+    // memory outlives every borrower.
+    Some(unsafe { core::slice::from_raw_parts_mut(virt as *mut u8, len) })
 }
 
 /// Creates the only mutable framebuffer slice used by the runtime. The loader mapped every valid

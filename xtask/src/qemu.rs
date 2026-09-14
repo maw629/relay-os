@@ -71,6 +71,8 @@ impl QemuRun {
             .args([
                 "-machine",
                 "q35",
+                "-device",
+                "qemu-xhci,p2=2,p3=2",
                 "-accel",
                 accel,
                 "-display",

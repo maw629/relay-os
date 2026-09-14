@@ -29,6 +29,81 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
     }
     // SAFETY: the static bounded heap is initialized once before any allocation is attempted.
     unsafe { crate::ALLOCATOR.initialize() };
+    // SAFETY: `valid_boot_info` established this BootInfo and its RSDP field.
+    match unsafe { crate::pci::probe(&*info) } {
+        Ok(platform) => {
+            let mut xhci_all = alloc::string::String::new();
+            for (index, addr) in platform.xhci_all.iter().enumerate() {
+                if index > 0 {
+                    xhci_all.push(',');
+                }
+                xhci_all.push_str(&alloc::format!(
+                    "{:02x}:{:02x}.{}",
+                    addr.bus,
+                    addr.device,
+                    addr.function
+                ));
+            }
+            for snapshot in &platform.snapshots {
+                let candidate = alloc::format!(
+                    "[relay] phase=platform-probe-candidate status=ok bdf={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} xecp={:#x}\n",
+                    snapshot.address.bus,
+                    snapshot.address.device,
+                    snapshot.address.function,
+                    snapshot.bar.base,
+                    snapshot.bar.size,
+                    snapshot.bar.is_64 as u8,
+                    snapshot.caps.max_slots,
+                    snapshot.caps.max_ports,
+                    snapshot.caps.context_64 as u8,
+                    snapshot.caps.addr_64 as u8,
+                    snapshot.caps.scratchpad_count,
+                    snapshot.caps.legacy_owned as u8,
+                    snapshot.caps.usb2_bdf_range.0,
+                    snapshot.caps.usb2_bdf_range.1,
+                    snapshot.caps.usb3_bdf_range.0,
+                    snapshot.caps.usb3_bdf_range.1,
+                    snapshot.xecp,
+                );
+                crate::console::write(candidate.as_bytes());
+            }
+            let line = alloc::format!(
+                "[relay] phase=platform-probe status=ok mcfg_base={:#x} bus={}-{} xhci={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} xecp={:#x} dmar={} xhci_all={}\n",
+                platform.region.base,
+                platform.region.bus_start,
+                platform.region.bus_end,
+                platform.xhci.bus,
+                platform.xhci.device,
+                platform.xhci.function,
+                platform.bar.base,
+                platform.bar.size,
+                platform.bar.is_64 as u8,
+                platform.caps.max_slots,
+                platform.caps.max_ports,
+                platform.caps.context_64 as u8,
+                platform.caps.addr_64 as u8,
+                platform.caps.scratchpad_count,
+                platform.caps.legacy_owned as u8,
+                platform.caps.usb2_bdf_range.0,
+                platform.caps.usb2_bdf_range.1,
+                platform.caps.usb3_bdf_range.0,
+                platform.caps.usb3_bdf_range.1,
+                platform.xecp,
+                platform.dmar as u8,
+                xhci_all,
+            );
+            crate::console::write(line.as_bytes());
+        }
+        Err(error) => {
+            let line = alloc::format!(
+                "[relay] phase=platform-probe status={} detail={:?}\n",
+                error.status(),
+                error
+            );
+            crate::console::write(line.as_bytes());
+            crate::arch::x86_64::halt();
+        }
+    }
     crate::console::write(b"[relay] phase=kernel-entry status=ok\n");
     crate::console::write(b"[relay] phase=kernel-runtime status=ok\n");
     crate::arch::x86_64::halt();

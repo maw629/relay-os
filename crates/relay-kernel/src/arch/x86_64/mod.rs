@@ -1,6 +1,8 @@
+pub mod dma;
 pub mod exception_stubs;
 pub mod exceptions;
 pub mod memory;
+pub mod mmio;
 
 pub fn halt() -> ! {
     loop {
