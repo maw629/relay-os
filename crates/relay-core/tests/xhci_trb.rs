@@ -59,6 +59,15 @@ fn normal_trb_carries_phys_len_chain_ioc() {
 }
 
 #[test]
+fn normal_trb_ioc_without_chain_leaves_chain_clear() {
+    let trb = encode_normal(0x2_0000_0000, 512, false, true, 1);
+    let control = u32::from_le_bytes([trb[12], trb[13], trb[14], trb[15]]);
+    assert_eq!((control >> 10) & 0x3F, 1);
+    assert_eq!(control & (1 << 4), 0);
+    assert_ne!(control & (1 << 5), 0);
+}
+
+#[test]
 fn link_trb_points_at_base_with_toggle() {
     let trb = encode_link(0x3_0000_0000, true, 1);
     assert_eq!(

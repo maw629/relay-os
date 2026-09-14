@@ -216,7 +216,7 @@ pub fn encode_normal(phys: u64, len: usize, chain: bool, ioc: bool, cycle: u8) -
     let mut trb = [0; 16];
     let status = len as u32 & 0x1FFFF;
     let mut control = trb_control(1, cycle);
-    if chain || ioc {
+    if chain {
         control |= 1 << 4;
     }
     if ioc {
