@@ -92,9 +92,8 @@ impl<S: FrameSource> DmaAllocator for BumpDmaAllocator<S> {
         let end = start
             .checked_add(layout.size as u64)
             .ok_or(DmaError::AddressLimit)?;
-        // `max_address` bounds the last byte inclusively; the direct-map
-        // ceiling bounds the exclusive end so no byte reaches 0x8000_0000_0000.
-        if end - 1 > layout.max_address || end > MAX_DIRECT_PHYSICAL {
+        // `max_address` and the direct-map ceiling both bound the last byte inclusively.
+        if end - 1 > layout.max_address || end - 1 > MAX_DIRECT_PHYSICAL {
             return Err(DmaError::AddressLimit);
         }
         if layout.zeroed {

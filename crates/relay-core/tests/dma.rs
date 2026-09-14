@@ -153,8 +153,9 @@ fn dma_skips_reserved_hole_and_reports_exhaustion() {
 #[test]
 fn direct_map_ceiling_is_enforced() {
     let mut allocator = BumpDmaAllocator::new(VecFrames::contiguous(0x7FFF_FFFF_E000, 4));
+    // Run's last byte is 0x8000_0000_0FFF, genuinely crossing the ceiling.
     assert_eq!(
-        allocator.allocate(layout(8192, 4096, u64::MAX, false)),
+        allocator.allocate(layout(12288, 4096, u64::MAX, false)),
         Err(DmaError::AddressLimit)
     );
 }
