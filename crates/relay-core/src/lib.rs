@@ -8,6 +8,7 @@ extern crate std;
 pub mod acpi;
 pub mod block;
 pub mod console;
+pub mod dma;
 pub mod ext2;
 pub mod fs;
 pub mod gpt;
