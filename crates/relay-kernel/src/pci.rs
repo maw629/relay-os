@@ -20,19 +20,24 @@ impl PhysicalMemory for KernelMem {
         output: &mut [u8],
     ) -> Result<(), relay_core::acpi::MemoryError> {
         use relay_core::acpi::MemoryError;
-        let end = physical
-            .checked_add(output.len() as u64)
-            .ok_or(MemoryError::Overflow)?;
-        if !output.is_empty() && end - 1 > 0x7FFF_FFFF_FFFF {
-            return Err(MemoryError::OutOfRange);
+        let len = output.len();
+        if len == 0 {
+            return Ok(());
         }
-        let virt = physical
-            .checked_add(crate::arch::x86_64::memory::PHYSICAL_MEMORY_OFFSET)
+        let _end = physical
+            .checked_add(len as u64)
             .ok_or(MemoryError::Overflow)?;
-        // SAFETY: bounds were checked against the direct-map ceiling and
-        // firmware tables are mapped RAM; only reads are performed.
-        let bytes = unsafe { core::slice::from_raw_parts(virt as *const u8, output.len()) };
-        output.copy_from_slice(bytes);
+        let window = mmio::map_uncached(physical, len).map_err(|err| match err {
+            MapError::InvalidRange => MemoryError::OutOfRange,
+            MapError::AlreadyMapped | MapError::NoMemory | MapError::UnsupportedDepth => {
+                MemoryError::Transport
+            }
+        })?;
+        // SAFETY: `window` is a fresh UC mapping owned exclusively by this
+        // read; `cover_range` inside the mapper bounded the range, `len > 0`
+        // was checked above, and the window is leaked per the leak-only
+        // discipline so it stays valid for the copy.
+        unsafe { core::ptr::copy_nonoverlapping(window as *const u8, output.as_mut_ptr(), len) };
         Ok(())
     }
 }

@@ -302,8 +302,9 @@ frames.
   allocator does, then exposing them at `PHYSICAL_MEMORY_OFFSET`.
   `cpu_address` is a `NonNull` into that direct-map window with the
   allocation lifetime; `device_address` is the physical start.
-- `kernel/pci.rs` implements `PhysicalMemory` (direct-map reads bounded
-  by the entry ceiling over the handoff widening below) and `PciConfig`
+- `kernel/pci.rs` implements `PhysicalMemory` (mapper-routed reads: an
+  on-demand UC window per read via `map_uncached`, unmappable ranges to
+  `OutOfRange`, resource failures to `Transport`, windows leaked) and `PciConfig`
   (ECAM MMIO through the mapped window) and adds a read-only `XhciCaps`
   snapshot taken with aligned DWORD MMIO loads — QEMU answers only
   DWORD-sized capability reads — and no controller init: capabilities
