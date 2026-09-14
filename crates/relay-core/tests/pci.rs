@@ -1,6 +1,6 @@
 use relay_core::pci::{
     BarInfo, McfgRegion, PciAddress, PciConfig, PciError, decode_xhci_caps, ecam_address,
-    enumerate_functions, find_xhci, find_xhci_controllers, probe_xhci_bar,
+    enumerate_functions, find_xhci, find_xhci_controllers, prefer_pch_primary, probe_xhci_bar,
 };
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -367,4 +367,14 @@ fn caps_decode_handles_usb3_first_ordering() {
     assert_eq!(caps.usb2_bdf_range, (3, 2));
     assert_eq!(caps.usb3_bdf_range, (1, 2));
     assert!(caps.legacy_owned);
+}
+
+#[test]
+fn primary_prefers_pch_over_lower_bdf() {
+    let thunderbolt = address(0, 0x0d, 0);
+    let pch = address(0, 0x14, 0);
+    assert_eq!(prefer_pch_primary(&[thunderbolt, pch]), Some(pch));
+    assert_eq!(prefer_pch_primary(&[thunderbolt]), Some(thunderbolt));
+    assert_eq!(prefer_pch_primary(&[pch]), Some(pch));
+    assert_eq!(prefer_pch_primary(&[]), None);
 }

@@ -175,6 +175,27 @@ pub fn find_xhci(config: &impl PciConfig) -> Result<PciAddress, PciError> {
     }
 }
 
+/// M1 single-target rule: prefer the PCH xHCI at bus 0, device 0x14,
+/// function 0 when it is among the sorted candidates, else fall back to
+/// the lowest-BDF candidate.
+///
+/// Backed by Linux device-attachment evidence on the NUC: `lsusb -t` plus
+/// the sysfs bus->PCI mapping show the Thunderbolt controller at
+/// `00:0d.0` owns empty buses while the PCH controller at `00:14.0`
+/// owns the keyboard and flash drive, so lowest-BDF-first picks the
+/// wrong controller there. Task 13 enumeration remains the backstop for
+/// bringing up secondary controllers.
+pub fn prefer_pch_primary(candidates: &[PciAddress]) -> Option<PciAddress> {
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates
+        .iter()
+        .find(|address| address.bus == 0 && address.device == 0x14 && address.function == 0)
+        .copied()
+        .or_else(|| candidates.first().copied())
+}
+
 pub fn probe_xhci_bar(config: &impl PciConfig, address: PciAddress) -> Result<BarInfo, PciError> {
     let command = config.read_u32(address, 0x04).map_err(map_transport)?;
     let bar0 = config.read_u32(address, 0x10).map_err(map_transport)?;

@@ -6,7 +6,7 @@ use relay_core::{
     mmio::MapError,
     pci::{
         BarInfo, PciAddress, PciConfig, PciError, XhciCaps, decode_xhci_caps,
-        find_xhci_controllers, probe_xhci_bar,
+        find_xhci_controllers, prefer_pch_primary, probe_xhci_bar,
     },
 };
 
@@ -88,6 +88,14 @@ pub struct PlatformInfo {
     pub bar: BarInfo,
     pub caps: XhciCaps,
     pub dmar: bool,
+    pub snapshots: Vec<CandidateSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CandidateSnapshot {
+    pub address: PciAddress,
+    pub bar: BarInfo,
+    pub caps: XhciCaps,
 }
 
 #[derive(Debug)]
@@ -125,13 +133,77 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
         region,
     };
     let candidates = find_xhci_controllers(&config).map_err(ProbeError::Pci)?;
-    let Some(xhci) = candidates.first().copied() else {
+    if candidates.is_empty() {
         return Err(ProbeError::Pci(PciError::NoXhci));
-    };
-    let bar = probe_xhci_bar(&config, xhci).map_err(ProbeError::Pci)?;
-    let bar_len = usize::try_from(bar.size).map_err(|_| ProbeError::Map(MapError::InvalidRange))?;
-    let bar_ptr = mmio::map_uncached(bar.base, bar_len).map_err(ProbeError::Map)?;
-    let caps = snapshot_caps(bar_ptr);
+    }
+    let mut snapshots = Vec::new();
+    for candidate in &candidates {
+        snapshots
+            .try_reserve(1)
+            .map_err(|_| ProbeError::Pci(PciError::Allocation))?;
+        let bar = match probe_xhci_bar(&config, *candidate) {
+            Ok(bar) => bar,
+            Err(error) => {
+                let failure = ProbeError::Pci(error);
+                let line = alloc::format!(
+                    "[relay] phase=platform-probe-candidate status={} detail={:?} bdf={:02x}:{:02x}.{}\n",
+                    failure.status(),
+                    failure,
+                    candidate.bus,
+                    candidate.device,
+                    candidate.function,
+                );
+                crate::console::write(line.as_bytes());
+                return Err(failure);
+            }
+        };
+        let bar_len = match usize::try_from(bar.size) {
+            Ok(len) => len,
+            Err(_) => {
+                let failure = ProbeError::Map(MapError::InvalidRange);
+                let line = alloc::format!(
+                    "[relay] phase=platform-probe-candidate status={} detail={:?} bdf={:02x}:{:02x}.{}\n",
+                    failure.status(),
+                    failure,
+                    candidate.bus,
+                    candidate.device,
+                    candidate.function,
+                );
+                crate::console::write(line.as_bytes());
+                return Err(failure);
+            }
+        };
+        let bar_ptr = match mmio::map_uncached(bar.base, bar_len) {
+            Ok(ptr) => ptr,
+            Err(error) => {
+                let failure = ProbeError::Map(error);
+                let line = alloc::format!(
+                    "[relay] phase=platform-probe-candidate status={} detail={:?} bdf={:02x}:{:02x}.{}\n",
+                    failure.status(),
+                    failure,
+                    candidate.bus,
+                    candidate.device,
+                    candidate.function,
+                );
+                crate::console::write(line.as_bytes());
+                return Err(failure);
+            }
+        };
+        let caps = snapshot_caps(bar_ptr);
+        snapshots.push(CandidateSnapshot {
+            address: *candidate,
+            bar,
+            caps,
+        });
+    }
+    let xhci = prefer_pch_primary(&candidates).ok_or(ProbeError::Pci(PciError::NoXhci))?;
+    let primary = snapshots
+        .iter()
+        .find(|snapshot| snapshot.address == xhci)
+        .copied()
+        .ok_or(ProbeError::Pci(PciError::NoXhci))?;
+    let bar = primary.bar;
+    let caps = primary.caps;
     let dmar = dmar_present(&memory, boot_info.acpi_rsdp_phys).map_err(ProbeError::Acpi)?;
     let _ = dma::allocator();
     Ok(PlatformInfo {
@@ -141,6 +213,7 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
         bar,
         caps,
         dmar,
+        snapshots,
     })
 }
 

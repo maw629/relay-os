@@ -87,3 +87,19 @@ capability dwords. Do not proceed to BOT storage work on the NUC until
 this table's NUC column is filled. If VT-d translation blocks DMA
 there, stop and get explicit design approval before adding an
 identity-mapped DMA domain or requiring VT-d disabled in firmware.
+
+## Linux Topology Basis For PCH Preference
+
+Hardware-verified on the NUC via Linux, recorded here as the basis for
+the `prefer_pch_primary` rule (PCH `00:14.0` preferred over lower-BDF
+`00:0d.0`; Task 13 enumeration is the backstop):
+
+- `lspci` reports two xHCI controllers: `00:0d.0` Thunderbolt
+  (`8086:461e`) and `00:14.0` PCH (`8086:51ed`).
+- Sysfs bus->PCI mapping: `usb1`/`usb2` -> `00:0d.0` (empty buses, no
+  attached devices); `usb3`/`usb4` -> `00:14.0`.
+- `lsusb -t` shows the keyboard and the DataTraveler 3.0 flash drive
+  attached under the `00:14.0` buses; the `00:0d.0` buses are empty.
+- Consequence: lowest-BDF-first would select the empty Thunderbolt
+  controller, so Task 11 prefers bus 0, device `0x14`, function 0 when
+  present and falls back to lowest BDF otherwise.

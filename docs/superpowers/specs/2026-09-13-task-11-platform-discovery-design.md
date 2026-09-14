@@ -219,12 +219,20 @@ failures map to `Transport`.
 
 Multi-controller policy: `find_xhci_controllers` returns every matching
 endpoint sorted ascending by BDF `(bus, device, function)`; the kernel
-probe records the full candidate list and brings up the lowest-BDF entry
-as primary. The lowest-BDF heuristic selects the Intel PCH xHCI (e.g.
-`00:14.0`) over higher-bus Thunderbolt/USB4 controllers, matching the
-single-target M1 profile; Task 13 enumeration remains the backstop for
-bringing up secondary controllers. Both BDFs are recorded in the probe
-marker (`xhci` primary plus `xhci_all` candidate list) as evidence.
+probe snapshots every candidate (BAR probe, BAR map, capability decode)
+and prints one `platform-probe-candidate status=ok ...` line per
+candidate in sorted order before the `platform-probe status=ok` marker,
+halting strictly on any candidate failure. Primary selection uses
+`prefer_pch_primary`: the entry at bus 0, device `0x14`, function 0 when
+present, else the lowest-BDF candidate. The PCH preference is backed by
+Linux device-attachment evidence on the NUC (`lsusb -t` plus the sysfs
+bus->PCI mapping show `00:0d.0` Thunderbolt owns empty buses while
+`00:14.0` PCH owns the keyboard and flash drive, so lowest-BDF-first
+picks the wrong controller there); lowest-BDF remains the fallback when
+the PCH entry is absent. Task 13 enumeration remains the backstop for
+bringing up secondary controllers. The primary BDF plus the full list
+are recorded in the probe marker (`xhci` primary plus `xhci_all`
+candidate list) as evidence.
 
 `probe_xhci_bar` targets BAR0 (`0x10`, plus `0x14` when 64-bit) with this
 exact order, restoring saved registers on every return path:
