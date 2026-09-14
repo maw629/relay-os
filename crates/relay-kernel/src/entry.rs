@@ -76,7 +76,7 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
             }
             for snapshot in &platform.snapshots {
                 let candidate = alloc::format!(
-                    "[relay] phase=platform-probe-candidate status=ok bdf={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={}\n",
+                    "[relay] phase=platform-probe-candidate status=ok bdf={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} xecp={:#x}\n",
                     snapshot.address.bus,
                     snapshot.address.device,
                     snapshot.address.function,
@@ -93,11 +93,12 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
                     snapshot.caps.usb2_bdf_range.1,
                     snapshot.caps.usb3_bdf_range.0,
                     snapshot.caps.usb3_bdf_range.1,
+                    snapshot.xecp,
                 );
                 crate::console::write(candidate.as_bytes());
             }
             let line = alloc::format!(
-                "[relay] phase=platform-probe status=ok mcfg_base={:#x} bus={}-{} xhci={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} dmar={} xhci_all={}\n",
+                "[relay] phase=platform-probe status=ok mcfg_base={:#x} bus={}-{} xhci={:02x}:{:02x}.{} bar_base={:#x} bar_size={:#x} bar64={} slots={} ports={} ctx64={} addr64={} scratch={} legacy={} usb2_off={} usb2_count={} usb3_off={} usb3_count={} xecp={:#x} dmar={} xhci_all={}\n",
                 platform.region.base,
                 platform.region.bus_start,
                 platform.region.bus_end,
@@ -117,6 +118,7 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
                 platform.caps.usb2_bdf_range.1,
                 platform.caps.usb3_bdf_range.0,
                 platform.caps.usb3_bdf_range.1,
+                platform.xecp,
                 platform.dmar as u8,
                 xhci_all,
             );

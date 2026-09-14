@@ -328,7 +328,12 @@ frames.
   length, interface version, `HCSPARAMS1-3`, `HCCPARAMS1` (including
   32/64-byte context size and 64-bit addressing), scratchpad count,
   legacy-support ownership bits from the first USB-legacy extended
-  capability, and the USB2/USB3 port-protocol ranges. Pure field
+  capability, and the USB2/USB3 port-protocol ranges. The snapshot keeps
+  the 32-byte header logic and fills an up-to-4 KiB heap window sized to
+  `min(4096, mapped BAR length)` with aligned DWORD volatile reads;
+  real controllers place extended capabilities beyond 256 B, and the
+  existing OOB-zero termination plus the 32-iteration walk cap keeps the
+  parse bounded for any xECP value. Pure field
   decoding lives in `relay-core::pci` over a byte slice so host tests
   cover it; the kernel only supplies the bytes. Extended-capability
    header words read ID in bits 7:0 with a DWORD-relative Next chain in

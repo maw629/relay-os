@@ -87,6 +87,7 @@ pub struct PlatformInfo {
     pub xhci_all: Vec<PciAddress>,
     pub bar: BarInfo,
     pub caps: XhciCaps,
+    pub xecp: u16,
     pub dmar: bool,
     pub snapshots: Vec<CandidateSnapshot>,
 }
@@ -96,6 +97,7 @@ pub struct CandidateSnapshot {
     pub address: PciAddress,
     pub bar: BarInfo,
     pub caps: XhciCaps,
+    pub xecp: u16,
 }
 
 #[derive(Debug)]
@@ -189,12 +191,28 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
                 return Err(failure);
             }
         };
-        let caps = snapshot_caps(bar_ptr);
-        snapshots.push(CandidateSnapshot {
-            address: *candidate,
-            bar,
-            caps,
-        });
+        match snapshot_caps(bar_ptr, bar_len) {
+            Ok((caps, xecp)) => {
+                snapshots.push(CandidateSnapshot {
+                    address: *candidate,
+                    bar,
+                    caps,
+                    xecp,
+                });
+            }
+            Err(error) => {
+                let line = alloc::format!(
+                    "[relay] phase=platform-probe-candidate status={} detail={:?} bdf={:02x}:{:02x}.{}\n",
+                    error.status(),
+                    error,
+                    candidate.bus,
+                    candidate.device,
+                    candidate.function,
+                );
+                crate::console::write(line.as_bytes());
+                return Err(error);
+            }
+        };
     }
     let xhci = prefer_pch_primary(&candidates).ok_or(ProbeError::Pci(PciError::NoXhci))?;
     let primary = snapshots
@@ -204,6 +222,7 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
         .ok_or(ProbeError::Pci(PciError::NoXhci))?;
     let bar = primary.bar;
     let caps = primary.caps;
+    let xecp = primary.xecp;
     let dmar = dmar_present(&memory, boot_info.acpi_rsdp_phys).map_err(ProbeError::Acpi)?;
     let _ = dma::allocator();
     Ok(PlatformInfo {
@@ -212,14 +231,23 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
         xhci_all: candidates,
         bar,
         caps,
+        xecp,
         dmar,
         snapshots,
     })
 }
 
-fn snapshot_caps(bar: *mut u8) -> XhciCaps {
+fn snapshot_caps(bar: *mut u8, bar_len: usize) -> Result<(XhciCaps, u16), ProbeError> {
     let mut header = [0; 32];
-    let mut ext = [0; 256];
+    // Up-to-4 KiB heap window bounded by the mapped BAR length: real Intel
+    // controllers place extended capabilities beyond 256 B, while the
+    // existing OOB-zero termination plus the 32-iteration cap in
+    // `decode_xhci_caps` keeps the parse bounded for any xECP value.
+    let window = core::cmp::min(4096, bar_len);
+    let mut ext = Vec::new();
+    ext.try_reserve(window)
+        .map_err(|_| ProbeError::Map(MapError::NoMemory))?;
+    ext.resize(window, 0);
     // SAFETY: the BAR was just mapped uncached and exclusively for this
     // probe; only volatile reads are performed within the mapped prefix.
     // Reads are DWORD-wide and DWORD-aligned: the capability registers are
@@ -233,11 +261,13 @@ fn snapshot_caps(bar: *mut u8) -> XhciCaps {
             word += 1;
         }
         word = 0;
-        while word < 64 {
+        while word < window / 4 {
             let value = (bar.add(word * 4) as *mut u32).read_volatile();
             ext[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
             word += 1;
         }
     }
-    decode_xhci_caps(&header, &ext)
+    let hcc = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
+    let xecp = ((hcc >> 16) & 0xFFFF) as u16;
+    Ok((decode_xhci_caps(&header, &ext), xecp))
 }
