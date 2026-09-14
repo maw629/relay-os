@@ -76,11 +76,14 @@ pub fn enable_bus_mastering(address: PciAddress) -> Result<(), ProbeError> {
     let register = virt as *mut u32;
     // SAFETY: the register lies in the leaked ECAM window owned exclusively
     // by this accessor; the device was discovered by `probe`, offset 0x04 is
-    // a validated DWORD command register, and only the bus-master bit is set
-    // while all other bits are preserved.
+    // a validated DWORD-aligned config address whose low half is the 16-bit
+    // Command register. Only the Command half is read-modified-written via a
+    // 16-bit access so the upper Status half (which contains W1C bits) is
+    // never written and latched status is preserved; only the bus-master bit
+    // is set while all other command bits are preserved.
     unsafe {
-        let command = register.read_volatile();
-        register.write_volatile(command | 0x4);
+        let command = (register.read_volatile() & 0xFFFF) as u16;
+        (register as *mut u16).write_volatile(command | 0x4);
     }
     Ok(())
 }
