@@ -499,7 +499,7 @@ cargo test -p relay-core --test acpi --locked
 cargo clippy -p relay-core --all-targets --locked -- -D warnings
 ```
 
-Expected: all ten ACPI tests pass warning-free.
+Expected: all nine ACPI tests pass warning-free.
 
 - [ ] **Step 5: Commit ACPI parsing**
 
@@ -1952,12 +1952,15 @@ grep -c "phase=kernel-runtime status=ok" target/qemu/serial.log
 ```
 
 Expected: fmt clean; all host suites pass; both target builds pass;
-Clippy reports no warnings; QEMU prints `platform-probe status=ok`
-with `usb2_off=1 usb2_count=2 usb3_off=3 usb3_count=2` matching the
-configured `p2=2,p3=2` topology (this is the layout cross-check for the
-section 7.2.2 byte positions — a mismatch here means the decode offsets
-are wrong and must be fixed against the xHCI spec before committing);
-both pre-existing kernel markers still print (Task 4 gate unbroken).
+Clippy reports no warnings; QEMU prints `platform-probe status=ok`.
+The protocol ranges must partition ports 1-4 with counts matching the
+configured `p2=2,p3=2` topology, but no USB2-first ordering is assumed:
+QEMU numbers USB3 ports first, so the live reading is
+`usb2_off=3 usb2_count=2 usb3_off=1 usb3_count=2`. If the offsets,
+counts, or partition differ from that (not merely the order), the
+section 7.2.2 byte positions are wrong and must be fixed against the
+xHCI spec before committing; both pre-existing kernel markers still
+print (Task 4 gate unbroken).
 
 - [ ] **Step 7: Commit platform discovery**
 

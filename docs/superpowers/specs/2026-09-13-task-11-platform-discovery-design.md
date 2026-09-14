@@ -303,15 +303,23 @@ frames.
   `cpu_address` is a `NonNull` into that direct-map window with the
   allocation lifetime; `device_address` is the physical start.
 - `kernel/pci.rs` implements `PhysicalMemory` (direct-map reads bounded
-  by the entry ceiling) and `PciConfig` (ECAM MMIO through the mapped
-  window) and adds a read-only `XhciCaps` snapshot taken with plain
-  MMIO loads, no controller init: capabilities length, interface
-  version, `HCSPARAMS1-3`, `HCCPARAMS1` (including 32/64-byte context
-  size and 64-bit addressing), scratchpad count, legacy-support
-  ownership bits from the first USB-legacy extended capability, and the
-  USB2/USB3 port-protocol ranges. Pure field decoding lives in
-  `relay-core::pci` over a byte slice so host tests cover it; the
-  kernel only supplies the bytes.
+  by the entry ceiling over the handoff widening below) and `PciConfig`
+  (ECAM MMIO through the mapped window) and adds a read-only `XhciCaps`
+  snapshot taken with aligned DWORD MMIO loads — QEMU answers only
+  DWORD-sized capability reads — and no controller init: capabilities
+  length, interface version, `HCSPARAMS1-3`, `HCCPARAMS1` (including
+  32/64-byte context size and 64-bit addressing), scratchpad count,
+  legacy-support ownership bits from the first USB-legacy extended
+  capability, and the USB2/USB3 port-protocol ranges. Pure field
+  decoding lives in `relay-core::pci` over a byte slice so host tests
+  cover it; the kernel only supplies the bytes. Extended-capability
+  header words read ID in bits 15:8 with a DWORD-relative Next chain in
+  bits 7:0; protocol revision is a u16 at +4 with the major version in
+  the high byte; port offset and count are the bytes at +8/+9; legacy
+  semaphores are BIOS bit 16 and OS bit 24 of the DWORD at +4. No
+  USB2-first ordering is assumed: QEMU numbers USB3 ports first, so the
+  decoder matches by major version and the evidence table records raw
+  offset/count pairs.
 - `main.rs` runs the probe after heap init and before the runtime
   banner: parse MCFG from `BootInfo.acpi_rsdp_phys`, map ECAM, find the
   single xHCI device, probe and map BAR0, take the caps snapshot, check
@@ -319,6 +327,12 @@ frames.
   item prefixed `[relay] phase=platform-probe status=...`. Any failure
   prints `status=unsupported-platform` (or the specific error class)
   and halts; the kernel never falls back to UEFI services.
+- `relay-loader/src/handoff.rs` direct-maps `LOADER_DATA`,
+  `BOOT_SERVICES_CODE/DATA`, `RUNTIME_SERVICES_CODE/DATA`, and
+  `ACPI_RECLAIM` in addition to conventional memory: the probe's
+  direct-map table reads and the PTE walker traverse those ranges, and
+  on-demand mapping could not serve `KernelMem` reads. MMIO, NVS, and
+  reserved ranges stay unmapped so strays still fault.
 
 `docs/acceptance/nuc-m1.md` gains a Task 11 probe table: MCFG base and
 bus range, xHCI BDF, BAR width/address/size, VT-d firmware state plus
@@ -334,8 +348,10 @@ and is not resolved here.
 
 Every subsystem exposes typed errors (`AcpiError`, `PciError`,
 `DmaError`, `MemoryError`, `MapError`) and never panics on firmware,
-device, or resource failures. Command and BAR registers are restored on
-every probe return path, including error returns. Parsers treat RSDP,
+device, or resource failures. Saved BAR values are restored before the
+probe validates them on the success path; a transport failure mid-probe
+leaves the device quiesced with decode off and halts the boot, which is
+the safe state. Parsers treat RSDP,
 XSDT/RSDT, MCFG, and config-space bytes as untrusted with bounds and
 overflow checks at each dereference. Kernel invariant failures keep the
 existing behavior: framebuffer plus QEMU-serial diagnostic, then halt.
