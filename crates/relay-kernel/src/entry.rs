@@ -88,7 +88,11 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
             crate::console::write(line.as_bytes());
         }
         Err(error) => {
-            let line = alloc::format!("[relay] phase=platform-probe status={}\n", error.status());
+            let line = alloc::format!(
+                "[relay] phase=platform-probe status={} detail={:?}\n",
+                error.status(),
+                error
+            );
             crate::console::write(line.as_bytes());
             crate::arch::x86_64::halt();
         }
