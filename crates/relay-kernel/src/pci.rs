@@ -239,15 +239,6 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
 
 fn snapshot_caps(bar: *mut u8, bar_len: usize) -> Result<(XhciCaps, u16), ProbeError> {
     let mut header = [0; 32];
-    // Up-to-4 KiB heap window bounded by the mapped BAR length: real Intel
-    // controllers place extended capabilities beyond 256 B, while the
-    // existing OOB-zero termination plus the 32-iteration cap in
-    // `decode_xhci_caps` keeps the parse bounded for any xECP value.
-    let window = core::cmp::min(4096, bar_len);
-    let mut ext = Vec::new();
-    ext.try_reserve(window)
-        .map_err(|_| ProbeError::Map(MapError::NoMemory))?;
-    ext.resize(window, 0);
     // SAFETY: the BAR was just mapped uncached and exclusively for this
     // probe; only volatile reads are performed within the mapped prefix.
     // Reads are DWORD-wide and DWORD-aligned: the capability registers are
@@ -260,14 +251,45 @@ fn snapshot_caps(bar: *mut u8, bar_len: usize) -> Result<(XhciCaps, u16), ProbeE
             header[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
             word += 1;
         }
-        word = 0;
+    }
+    let hcc = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
+    let xecp = ((hcc >> 16) & 0xFFFF) as u16;
+    // Two-phase window at the xECP-relative location: real Intel
+    // controllers place extended capabilities at xECP 0x2000 (byte offset
+    // 0x8000), so a BAR+0 prefix would waste 32 KiB of dead prefix per
+    // candidate against the 64 KiB total heap. Snapshot only the needed
+    // up-to-1 KiB window; the base-relative decode plus OOB-zero
+    // termination and the 32-iteration cap keeps the parse bounded.
+    let ext_base = (xecp as u64)
+        .checked_mul(4)
+        .ok_or(ProbeError::Map(MapError::InvalidRange))?;
+    let ext_base_usize =
+        usize::try_from(ext_base).map_err(|_| ProbeError::Map(MapError::InvalidRange))?;
+    let remaining = bar_len
+        .checked_sub(ext_base_usize)
+        .ok_or(ProbeError::Map(MapError::InvalidRange))?;
+    let window = core::cmp::min(1024, remaining);
+    let end = ext_base
+        .checked_add(window as u64)
+        .ok_or(ProbeError::Map(MapError::InvalidRange))?;
+    if end > bar_len as u64 {
+        return Err(ProbeError::Map(MapError::InvalidRange));
+    }
+    let mut ext = Vec::new();
+    ext.try_reserve(window)
+        .map_err(|_| ProbeError::Map(MapError::NoMemory))?;
+    ext.resize(window, 0);
+    // SAFETY: same BAR mapping as the header read above; every read lands
+    // inside the checked [ext_base, end) window, DWORD-wide and
+    // DWORD-aligned per the QEMU xHCI constraint above.
+    unsafe {
+        let mut word = 0;
         while word < window / 4 {
-            let value = (bar.add(word * 4) as *mut u32).read_volatile();
+            let offset = ext_base_usize + word * 4;
+            let value = (bar.add(offset) as *mut u32).read_volatile();
             ext[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
             word += 1;
         }
     }
-    let hcc = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
-    let xecp = ((hcc >> 16) & 0xFFFF) as u16;
-    Ok((decode_xhci_caps(&header, &ext), xecp))
+    Ok((decode_xhci_caps(&header, ext_base, &ext), xecp))
 }

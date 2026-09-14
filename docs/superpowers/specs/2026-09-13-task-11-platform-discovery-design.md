@@ -323,17 +323,24 @@ frames.
   on-demand UC window per read via `map_uncached`, unmappable ranges to
   `OutOfRange`, resource failures to `Transport`, windows leaked) and `PciConfig`
   (ECAM MMIO through the mapped window) and adds a read-only `XhciCaps`
-  snapshot taken with aligned DWORD MMIO loads — QEMU answers only
-  DWORD-sized capability reads — and no controller init: capabilities
-  length, interface version, `HCSPARAMS1-3`, `HCCPARAMS1` (including
-  32/64-byte context size and 64-bit addressing), scratchpad count,
-  legacy-support ownership bits from the first USB-legacy extended
-  capability, and the USB2/USB3 port-protocol ranges. The snapshot keeps
-  the 32-byte header logic and fills an up-to-4 KiB heap window sized to
-  `min(4096, mapped BAR length)` with aligned DWORD volatile reads;
-  real controllers place extended capabilities beyond 256 B, and the
-  existing OOB-zero termination plus the 32-iteration walk cap keeps the
-  parse bounded for any xECP value. Pure field
+   snapshot taken with aligned DWORD MMIO loads — QEMU answers only
+   DWORD-sized capability reads — and no controller init: capabilities
+   length, interface version, `HCSPARAMS1-3`, `HCCPARAMS1` (including
+   32/64-byte context size and 64-bit addressing), scratchpad count,
+   legacy-support ownership bits from the first USB-legacy extended
+   capability, and the USB2/USB3 port-protocol ranges. The snapshot is
+   two-phase: it keeps the 32-byte header logic, parses xECP from the
+   header exactly as the decoder does, then fills an up-to-1 KiB heap
+   window sized to `min(1024, mapped BAR length minus xECP*4)` starting
+   at absolute offset `xECP*4` with aligned DWORD volatile reads
+   (checked xECP*4, window-end, and within-BAR arithmetic;
+   out-of-range windows are `InvalidRange`); decode is base-relative
+   (`ext_base = xECP*4`, out-of-window reads yield OOB-zero) with the
+   existing 32-iteration walk cap keeping the parse bounded for any
+   xECP value. The ~1 KiB per-candidate heap footprint preserves the
+   64 KiB total heap budget, unlike a BAR+0 prefix snapshot that would
+   waste 32 KiB of dead prefix per candidate on hardware where xECP is
+   large (both NUC controllers report xECP `0x2000`). Pure field
   decoding lives in `relay-core::pci` over a byte slice so host tests
   cover it; the kernel only supplies the bytes. Extended-capability
    header words read ID in bits 7:0 with a DWORD-relative Next chain in

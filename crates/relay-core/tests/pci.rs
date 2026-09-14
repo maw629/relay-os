@@ -325,7 +325,7 @@ fn caps_decode_reports_slots_ports_width_and_protocols() {
     ext[40..44].copy_from_slice(&0x2042_5355u32.to_le_bytes());
     ext[44] = 3;
     ext[45] = 2;
-    let caps = decode_xhci_caps(&header, &ext);
+    let caps = decode_xhci_caps(&header, 0, &ext);
     assert_eq!(caps.cap_length, 32);
     assert_eq!(caps.interface_version, 0x0100);
     assert_eq!(caps.max_slots, 8);
@@ -336,7 +336,7 @@ fn caps_decode_reports_slots_ports_width_and_protocols() {
     assert!(caps.legacy_owned);
     assert_eq!(caps.usb2_bdf_range, (1, 2));
     assert_eq!(caps.usb3_bdf_range, (3, 2));
-    let plain = decode_xhci_caps(&[0; 32], &[]);
+    let plain = decode_xhci_caps(&[0; 32], 0, &[]);
     assert_eq!(plain.usb2_bdf_range, (0, 0));
     assert_eq!(plain.usb3_bdf_range, (0, 0));
     assert!(!plain.legacy_owned);
@@ -363,10 +363,50 @@ fn caps_decode_handles_usb3_first_ordering() {
     ext[28] = 3;
     ext[29] = 2;
     ext[36..40].copy_from_slice(&0x0101_0001u32.to_le_bytes());
-    let caps = decode_xhci_caps(&header, &ext);
+    let caps = decode_xhci_caps(&header, 0, &ext);
     assert_eq!(caps.usb2_bdf_range, (3, 2));
     assert_eq!(caps.usb3_bdf_range, (1, 2));
     assert!(caps.legacy_owned);
+}
+
+#[test]
+fn caps_decode_handles_nonzero_base() {
+    let mut base_header = [0; 32];
+    base_header[0] = 32;
+    base_header[2..4].copy_from_slice(&0x0100u16.to_le_bytes());
+    base_header[4..8].copy_from_slice(&0x0400_0008u32.to_le_bytes());
+    base_header[8..12].copy_from_slice(&0x0000_0042u32.to_le_bytes());
+    base_header[16..20].copy_from_slice(&0x0001_2205u32.to_le_bytes());
+    let mut base_ext = vec![0; 64];
+    base_ext[4..8].copy_from_slice(&0x0001_0401u32.to_le_bytes());
+    base_ext[20..24].copy_from_slice(&0x0200_0402u32.to_le_bytes());
+    base_ext[24..28].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    base_ext[28] = 1;
+    base_ext[29] = 2;
+    base_ext[36..40].copy_from_slice(&0x0300_0002u32.to_le_bytes());
+    base_ext[40..44].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    base_ext[44] = 3;
+    base_ext[45] = 2;
+    let expected = decode_xhci_caps(&base_header, 0, &base_ext);
+
+    let mut header = [0; 32];
+    header[0] = 32;
+    header[2..4].copy_from_slice(&0x0100u16.to_le_bytes());
+    header[4..8].copy_from_slice(&0x0400_0008u32.to_le_bytes());
+    header[8..12].copy_from_slice(&0x0000_0042u32.to_le_bytes());
+    header[16..20].copy_from_slice(&0x2000_2205u32.to_le_bytes());
+    let mut ext = vec![0; 64];
+    ext[0..4].copy_from_slice(&0x0001_0401u32.to_le_bytes());
+    ext[16..20].copy_from_slice(&0x0200_0402u32.to_le_bytes());
+    ext[20..24].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    ext[24] = 1;
+    ext[25] = 2;
+    ext[32..36].copy_from_slice(&0x0300_0002u32.to_le_bytes());
+    ext[36..40].copy_from_slice(&0x2042_5355u32.to_le_bytes());
+    ext[40] = 3;
+    ext[41] = 2;
+    let caps = decode_xhci_caps(&header, 0x8000, &ext);
+    assert_eq!(caps, expected);
 }
 
 #[test]

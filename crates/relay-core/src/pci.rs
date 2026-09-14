@@ -268,7 +268,7 @@ pub fn probe_xhci_bar(config: &impl PciConfig, address: PciAddress) -> Result<Ba
     Ok(BarInfo { base, size, is_64 })
 }
 
-pub fn decode_xhci_caps(header: &[u8; 32], ext: &[u8]) -> XhciCaps {
+pub fn decode_xhci_caps(header: &[u8; 32], ext_base: u64, ext: &[u8]) -> XhciCaps {
     let version = u16::from_le_bytes([header[2], header[3]]);
     let hcs1 = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
     let hcc = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
@@ -278,14 +278,14 @@ pub fn decode_xhci_caps(header: &[u8; 32], ext: &[u8]) -> XhciCaps {
     } else {
         0
     };
-    let xecp = ((hcc >> 16) & 0xFFFF) as usize;
+    let xecp = ((hcc >> 16) & 0xFFFF) as u64;
     let mut legacy_owned = false;
     let mut usb2 = (0u8, 0u8);
     let mut usb3 = (0u8, 0u8);
     if xecp != 0 {
         let mut offset = xecp * 4;
         for _ in 0..32 {
-            let dword = read_ext(ext, offset);
+            let dword = read_ext(ext_base, ext, offset);
             // Extended-capability header per xHCI section 7: capability ID
             // in bits 7:0, next-capability stride in DWORDs in bits 15:8,
             // minor/major protocol revision in bits 23:16/31:24 for
@@ -303,7 +303,7 @@ pub fn decode_xhci_caps(header: &[u8; 32], ext: &[u8]) -> XhciCaps {
                 }
                 2 => {
                     let major = ((dword >> 24) & 0xFF) as u8;
-                    let port = read_ext(ext, offset + 8);
+                    let port = read_ext(ext_base, ext, offset.saturating_add(8));
                     let range = ((port & 0xFF) as u8, ((port >> 8) & 0xFF) as u8);
                     if major == 2 && usb2 == (0, 0) {
                         usb2 = range;
@@ -316,7 +316,7 @@ pub fn decode_xhci_caps(header: &[u8; 32], ext: &[u8]) -> XhciCaps {
             if next == 0 {
                 break;
             }
-            offset += next * 4;
+            offset += (next as u64) * 4;
         }
     }
     XhciCaps {
@@ -333,8 +333,20 @@ pub fn decode_xhci_caps(header: &[u8; 32], ext: &[u8]) -> XhciCaps {
     }
 }
 
-fn read_ext(ext: &[u8], offset: usize) -> u32 {
-    match ext.get(offset..offset + 4) {
+fn read_ext(ext_base: u64, ext: &[u8], offset: u64) -> u32 {
+    let rel = match offset.checked_sub(ext_base) {
+        Some(value) => value,
+        None => return 0,
+    };
+    let rel = match usize::try_from(rel) {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    let end = match rel.checked_add(4) {
+        Some(value) => value,
+        None => return 0,
+    };
+    match ext.get(rel..end) {
         Some(bytes) => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
         None => 0,
     }
