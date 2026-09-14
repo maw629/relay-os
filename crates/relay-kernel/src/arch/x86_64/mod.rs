@@ -1,3 +1,4 @@
+pub mod clock;
 pub mod dma;
 pub mod exception_stubs;
 pub mod exceptions;

@@ -93,6 +93,7 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
                 xhci_all,
             );
             crate::console::write(line.as_bytes());
+            crate::xhci::controller::probe_and_report(&platform);
         }
         Err(error) => {
             let line = alloc::format!(

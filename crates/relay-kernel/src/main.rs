@@ -9,6 +9,7 @@ mod console;
 mod entry;
 mod pci;
 mod serial;
+mod xhci;
 
 #[global_allocator]
 static ALLOCATOR: allocator::BumpAllocator = allocator::BumpAllocator::new();

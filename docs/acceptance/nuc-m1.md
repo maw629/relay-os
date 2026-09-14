@@ -112,3 +112,24 @@ the `prefer_pch_primary` rule (PCH `00:14.0` preferred over lower-BDF
 - Consequence: lowest-BDF-first would select the empty Thunderbolt
   controller, so Task 11 prefers bus 0, device `0x14`, function 0 when
   present and falls back to lowest BDF otherwise.
+
+## Task 12 Controller Init (Task 3)
+
+QEMU-observed values come from `target/qemu/serial.log` after
+`cargo xtask qemu boot target/relay-os.img --display none --accel tcg`
+with `-device qemu-xhci,p2=2,p3=2`. Full marker line:
+
+```text
+[relay] phase=xhci-probe status=ok slots_en=32 ports=4 ctx64=0 addr64=1 scratch=0 control_probe=none xecp=0x8 max_slots=64
+```
+
+| Field | QEMU (Task 3) | NUC (Task 4 pending) |
+| --- | --- | --- |
+| slots_en | `32` | Pending (Task 4) |
+| ports | `4` | Pending (Task 4) |
+| ctx64 | `0` | Pending (Task 4) |
+| addr64 | `1` | Pending (Task 4) |
+| scratch | `0` | Pending (Task 4) |
+| xecp | `0x8` | Pending (Task 4) |
+| max_slots | `64` | Pending (Task 4) |
+| control_probe | `none` | Pending (Task 4) |

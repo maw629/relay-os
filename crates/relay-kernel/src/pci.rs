@@ -48,6 +48,43 @@ struct EcamAccess {
     region: McfgRegion,
 }
 
+struct EcamStorage(core::cell::UnsafeCell<Option<(u64, McfgRegion)>>);
+
+// Single-core boot discipline: `probe` publishes the leaked ECAM window
+// once before `enable_bus_mastering` can observe it.
+unsafe impl Sync for EcamStorage {}
+
+static STORED_ECAM: EcamStorage = EcamStorage(core::cell::UnsafeCell::new(None));
+
+/// Enables PCI bus mastering for a discovered xHCI function, preserving all
+/// other command-register bits. Must run once after DMA structures are ready;
+/// the bit stays on for later tasks.
+pub fn enable_bus_mastering(address: PciAddress) -> Result<(), ProbeError> {
+    // SAFETY: single boot core; `probe` stored the leaked ECAM window before
+    // any controller init can call here.
+    let stored = unsafe { (*STORED_ECAM.0.get()).as_ref() }
+        .copied()
+        .ok_or(ProbeError::Pci(PciError::OutOfRange))?;
+    let (mapped, region) = stored;
+    let phys = relay_core::pci::ecam_address(&region, address, 0x04).map_err(ProbeError::Pci)?;
+    let virt = mapped
+        .checked_add(
+            phys.checked_sub(region.base)
+                .ok_or(ProbeError::Pci(PciError::OutOfRange))?,
+        )
+        .ok_or(ProbeError::Pci(PciError::OutOfRange))?;
+    let register = virt as *mut u32;
+    // SAFETY: the register lies in the leaked ECAM window owned exclusively
+    // by this accessor; the device was discovered by `probe`, offset 0x04 is
+    // a validated DWORD command register, and only the bus-master bit is set
+    // while all other bits are preserved.
+    unsafe {
+        let command = register.read_volatile();
+        register.write_volatile(command | 0x4);
+    }
+    Ok(())
+}
+
 impl EcamAccess {
     fn register(&self, address: PciAddress, offset: u16) -> Result<*mut u32, PciError> {
         let phys = relay_core::pci::ecam_address(&self.region, address, offset)?;
@@ -130,6 +167,11 @@ pub fn probe(boot_info: &BootInfo) -> Result<PlatformInfo, ProbeError> {
     let ecam_len =
         usize::try_from(buses * (1 << 20)).map_err(|_| ProbeError::Map(MapError::InvalidRange))?;
     let ecam = mmio::map_uncached(region.base, ecam_len).map_err(ProbeError::Map)? as u64;
+    // SAFETY: single-core boot; this is the sole publication of the leaked
+    // ECAM window for later bus-mastering enablement.
+    unsafe {
+        *STORED_ECAM.0.get() = Some((ecam, region));
+    }
     let config = EcamAccess {
         mapped: ecam,
         region,
