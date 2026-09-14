@@ -29,6 +29,36 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
     }
     // SAFETY: the static bounded heap is initialized once before any allocation is attempted.
     unsafe { crate::ALLOCATOR.initialize() };
+    // TEMPORARY debug: diagnose NUC page fault at first ACPI read; revert before any PR.
+    // SAFETY: `valid_boot_info` established this BootInfo and its RSDP field.
+    let rsdp = unsafe { (*info).acpi_rsdp_phys };
+    let line = alloc::format!("[relay] phase=platform-probe-debug rsdp=0x{rsdp:x}\n");
+    crate::console::write(line.as_bytes());
+    // SAFETY: `valid_boot_info` validated the memory-map address, count, and ordering.
+    let regions = unsafe {
+        core::slice::from_raw_parts(
+            (*info).memory_map.entries_address as *const MemoryRegion,
+            (*info).memory_map.entry_count as usize,
+        )
+    };
+    let mut found = false;
+    for region in regions {
+        if region.start <= rsdp && rsdp < region.end {
+            let line = alloc::format!(
+                "[relay] phase=platform-probe-debug rsdp_region start=0x{s:x} end=0x{e:x} kind={k} reserved={r}\n",
+                s = region.start,
+                e = region.end,
+                k = region.kind,
+                r = region.reserved,
+            );
+            crate::console::write(line.as_bytes());
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        crate::console::write(b"[relay] phase=platform-probe-debug rsdp_region=none\n");
+    }
     // SAFETY: `valid_boot_info` established this BootInfo and its RSDP field.
     match unsafe { crate::pci::probe(&*info) } {
         Ok(platform) => {
