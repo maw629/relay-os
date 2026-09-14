@@ -12,5 +12,6 @@ pub mod ext2;
 pub mod fs;
 pub mod gpt;
 pub mod memory;
+pub mod pci;
 pub mod shell;
 pub mod vfs;
