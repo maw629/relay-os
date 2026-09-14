@@ -129,7 +129,7 @@ pub struct XhciCaps {
     pub usb3_bdf_range: (u8, u8),
 }
 
-pub fn decode_xhci_caps(header: &[u8; 32], ext_caps: &[u8]) -> Result<XhciCaps, PciError>;
+pub fn decode_xhci_caps(header: &[u8; 32], ext_caps: &[u8]) -> XhciCaps;
 ```
 
 `enumerate_functions` yields `(address, class_code)` with class code packed
@@ -166,7 +166,7 @@ Tasks 12-15.
 `parse_mcfg` reads only through `PhysicalMemory::read_exact` with checked
 physical arithmetic on every step:
 
-1. Read 24 bytes at `rsdp_phys`: signature must be `RSD PTR `, else
+1. Read 36 bytes at `rsdp_phys`: signature must be `RSD PTR `, else
    `BadSignature`; the 8-bit checksum of the first 20 bytes must be zero,
    else `Checksum`; revision byte selects the path (0-1: RSDT via the
    32-bit pointer at offset 16; 2 and up: XSDT via the 64-bit pointer at
@@ -177,7 +177,7 @@ physical arithmetic on every step:
    `length` bytes must be zero, else `Checksum`.
 3. Walk the entry array (`length - 36` divided by 8 for XSDT, by 4 for
    RSDT; a nonzero remainder is `BadLength`). For each entry pointer,
-   read 44 header bytes; entries with signature `MCFG` are candidates.
+    read 36 header bytes; entries with signature `MCFG` are candidates.
    No `MCFG` anywhere is `UnsupportedPlatform` (the milestone's specific
    unsupported-platform error for a missing window).
 4. A candidate MCFG validates as: `length` exactly `44 + 16` (one entry;
@@ -313,10 +313,10 @@ frames.
   capability, and the USB2/USB3 port-protocol ranges. Pure field
   decoding lives in `relay-core::pci` over a byte slice so host tests
   cover it; the kernel only supplies the bytes. Extended-capability
-  header words read ID in bits 15:8 with a DWORD-relative Next chain in
-  bits 7:0; protocol revision is a u16 at +4 with the major version in
-  the high byte; port offset and count are the bytes at +8/+9; legacy
-  semaphores are BIOS bit 16 and OS bit 24 of the DWORD at +4. No
+   header words read ID in bits 7:0 with a DWORD-relative Next chain in
+   bits 15:8; protocol major version comes from the header DWORD bits
+   31:24 and the +4 DWORD is the name string; port offset and count are the bytes at +8/+9; legacy
+   semaphores are BIOS bit 16 and OS bit 24 of the header DWORD (USBLEGSUP DWORD0). No
   USB2-first ordering is assumed: QEMU numbers USB3 ports first, so the
   decoder matches by major version and the evidence table records raw
   offset/count pairs.

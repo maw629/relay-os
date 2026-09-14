@@ -1813,16 +1813,21 @@ fn snapshot_caps(bar: *mut u8) -> XhciCaps {
     let mut ext = [0; 256];
     // SAFETY: the BAR was just mapped uncached and exclusively for this
     // probe; only volatile reads are performed within the mapped prefix.
+    // Reads are DWORD-wide and DWORD-aligned: the capability registers are
+    // 32-bit and sub-DWORD reads do not return the upper bytes on the QEMU
+    // xHCI model (its capability handler only answers aligned DWORD reads).
     unsafe {
-        let mut index = 0;
-        while index < 32 {
-            header[index] = (bar.add(index)).read_volatile();
-            index += 1;
+        let mut word = 0;
+        while word < 8 {
+            let value = (bar.add(word * 4) as *mut u32).read_volatile();
+            header[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
+            word += 1;
         }
-        index = 0;
-        while index < 256 {
-            ext[index] = (bar.add(index)).read_volatile();
-            index += 1;
+        word = 0;
+        while word < 64 {
+            let value = (bar.add(word * 4) as *mut u32).read_volatile();
+            ext[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
+            word += 1;
         }
     }
     decode_xhci_caps(&header, &ext)

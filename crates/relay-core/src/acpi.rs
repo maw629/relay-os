@@ -80,9 +80,15 @@ fn root_entries(
             return Err(AcpiError::Checksum);
         }
         let xsdt = le_u64(&rsdp[24..32]);
+        if sdt_signature(memory, xsdt)? != *b"XSDT" {
+            return Err(AcpiError::BadSignature);
+        }
         Ok((true, sdt_entries(memory, xsdt, 8)?))
     } else {
         let rsdt = le_u32(&rsdp[16..20]) as u64;
+        if sdt_signature(memory, rsdt)? != *b"RSDT" {
+            return Err(AcpiError::BadSignature);
+        }
         Ok((false, sdt_entries(memory, rsdt, 4)?))
     }
 }

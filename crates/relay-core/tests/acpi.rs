@@ -107,6 +107,20 @@ fn xsdt_rejects_bad_checksum() {
 }
 
 #[test]
+fn xsdt_rejects_bad_signature() {
+    let mcfg = mcfg_bytes(0xE000_0000, 0, 0, 255);
+    let mut xsdt = sdt_header(b"XSDX", 44);
+    xsdt.extend_from_slice(&MCFG_PHYS.to_le_bytes());
+    fix_checksum(&mut xsdt, 9);
+    let memory = image(&[
+        (RSDP_PHYS, rsdp_v2(XSDT_PHYS).to_vec()),
+        (XSDT_PHYS, xsdt),
+        (MCFG_PHYS, mcfg),
+    ]);
+    assert_eq!(parse_mcfg(&memory, RSDP_PHYS), Err(AcpiError::BadSignature));
+}
+
+#[test]
 fn truncated_table_is_truncated() {
     let small = VecMemory::new(RSDP_PHYS, memory_bytes_truncated());
     assert_eq!(parse_mcfg(&small, RSDP_PHYS), Err(AcpiError::Truncated));
