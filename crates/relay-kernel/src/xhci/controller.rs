@@ -32,13 +32,9 @@ pub struct XhciController {
     max_slots_en: u8,
     max_ports: u8,
     scratchpad_count: u16,
-    #[allow(dead_code)]
     dcbaa_phys: u64,
-    #[allow(dead_code)]
     cmd_phys: u64,
-    #[allow(dead_code)]
     cmd_enqueue: usize,
-    #[allow(dead_code)]
     cmd_cycle: bool,
     evt_phys: u64,
     #[allow(dead_code)]
@@ -222,7 +218,9 @@ impl XhciController {
         }
         let _ = erst;
 
-        // Program DCBAAP / CRCR (cycle 1) / ERSTBA / ERSTSZ / ERDP.
+        // Program DCBAAP / CRCR (cycle 1). ERSTSZ/ERSTBA/ERDP are
+        // programmed later by `program_event_ring`, immediately before
+        // the first doorbell (see its docs for why).
         let dcbaap_off = op_base
             .checked_add(relay_core::xhci::OP_DCBAAP)
             .ok_or(XhciError::InvalidRegister)?;
@@ -235,15 +233,6 @@ impl XhciController {
         let iman_off = rt_base
             .checked_add(relay_core::xhci::RT_IMAN)
             .ok_or(XhciError::InvalidRegister)?;
-        let erstsz_off = rt_base
-            .checked_add(relay_core::xhci::RT_ERSTSZ)
-            .ok_or(XhciError::InvalidRegister)?;
-        let erstba_off = rt_base
-            .checked_add(relay_core::xhci::RT_ERSTBA)
-            .ok_or(XhciError::InvalidRegister)?;
-        let erdp_off = rt_base
-            .checked_add(relay_core::xhci::RT_ERDP)
-            .ok_or(XhciError::InvalidRegister)?;
 
         if dcbaa_phys & 0x3F != 0
             || cmd_phys & 0x3F != 0
@@ -253,12 +242,12 @@ impl XhciController {
             return Err(XhciError::Allocation);
         }
         // Device-context pointers above MaxSlotsEn stay zero; DCBAA covers
-        // 256 entries regardless of the 32-slot bound.
+        // 256 entries regardless of the 32-slot bound. The fence makes
+        // the DCBAA, command-ring Link, and ERST writes visible before
+        // the registers below publish them to the controller.
+        crate::arch::x86_64::memory::dma_write_fence();
         write64(&mut mmio, dcbaap_off, dcbaa_phys)?;
         write64(&mut mmio, crcr_off, cmd_phys | 0x1)?;
-        write64(&mut mmio, erstba_off, erst_phys)?;
-        mmio.write32(erstsz_off, 1)?;
-        write64(&mut mmio, erdp_off, evt_phys)?;
         // Clear interrupter IP while keeping IE=0 (polling).
         mmio.write32(iman_off, IMAN_IP)?;
 
@@ -311,7 +300,7 @@ impl XhciController {
         let mut cycle = self.evt_cycle;
         while consumed < EVT_RING_TRBS {
             let trb = read_event_trb(self.evt_phys, dequeue)?;
-            if trb[15] & 0x01 != cycle as u8 {
+            if trb[12] & 0x01 != cycle as u8 {
                 break;
             }
             consumed += 1;
@@ -324,7 +313,7 @@ impl XhciController {
         if consumed == EVT_RING_TRBS {
             // 64 matched without an empty entry: check one more for overrun.
             let trb = read_event_trb(self.evt_phys, dequeue)?;
-            if trb[15] & 0x01 == cycle as u8 {
+            if trb[12] & 0x01 == cycle as u8 {
                 return Err(XhciError::TransferFailed(0));
             }
         }
@@ -359,7 +348,6 @@ impl XhciController {
         Ok(consumed)
     }
 
-    #[allow(dead_code)]
     pub fn connected_root_ports(&self, output: &mut [u8]) -> Result<usize, XhciError> {
         let mut count = 0usize;
         let mut port: u16 = 1;
@@ -383,7 +371,6 @@ impl XhciController {
 
     /// Slot doorbell for Task 4: `db + slot * 4` with the endpoint target
     /// in bits 7:0 and stream 0 in bits 31:16.
-    #[allow(dead_code)]
     pub(crate) fn slot_doorbell(&mut self, slot: u8, target: u8) -> Result<(), XhciError> {
         let slot_off = (slot as u32)
             .checked_mul(4)
@@ -396,7 +383,6 @@ impl XhciController {
     }
 
     /// Command doorbell (`db + 0`) for Task 4 command submission.
-    #[allow(dead_code)]
     pub(crate) fn ring_command_doorbell(&mut self) -> Result<(), XhciError> {
         self.mmio.write32(self.db_base, 0)
     }
@@ -404,13 +390,14 @@ impl XhciController {
     /// Poll-wait helper for Task 4: drains events until the CmdComplete
     /// with `ptr` arrives or `deadline` expires. Returns the slot field
     /// from the matching completion on success; maps non-success codes
-    /// through `completion_to_error`. `_slot` reserves Task 4 slot
-    /// correlation (EnableSlot passes 0 and uses the returned slot).
-    #[allow(dead_code)]
+    /// through `completion_to_error`. `slot == 0` is the EnableSlot case
+    /// (the returned slot is the newly assigned one); any other command
+    /// must complete for its own slot or the wait fails with
+    /// `InvalidSlot`.
     pub(crate) fn wait_command(
         &mut self,
         ptr: u64,
-        _slot: u8,
+        slot: u8,
         deadline: Deadline,
         clock: &impl Clock,
     ) -> Result<u8, XhciError> {
@@ -420,7 +407,7 @@ impl XhciController {
             let mut iter = 0usize;
             while iter < EVT_RING_TRBS {
                 let trb = read_event_trb(self.evt_phys, self.evt_dequeue)?;
-                if trb[15] & 0x01 != self.evt_cycle as u8 {
+                if trb[12] & 0x01 != self.evt_cycle as u8 {
                     break;
                 }
                 let control = u32::from_le_bytes([trb[12], trb[13], trb[14], trb[15]]);
@@ -447,9 +434,15 @@ impl XhciController {
                     }
                 }
                 self.advance_event(1)?;
-                if let (Some(slot), Some(code)) = (matched_slot, matched_code) {
+                if let (Some(found_slot), Some(code)) = (matched_slot, matched_code) {
+                    if slot != 0 && found_slot != slot {
+                        return Err(XhciError::InvalidSlot);
+                    }
                     relay_core::xhci::completion_to_error(code)?;
-                    return Ok(slot);
+                    return Ok(found_slot);
+                }
+                if clock.now_ticks() >= deadline.0 {
+                    return Err(XhciError::Timeout);
                 }
                 iter += 1;
             }
@@ -457,6 +450,128 @@ impl XhciController {
                 return Err(XhciError::Timeout);
             }
         }
+    }
+
+    /// Poll-wait helper for Task 4 transfers: drains events until the
+    /// Transfer Event for the TRB at `ptr` on `slot` endpoint `dci`
+    /// arrives or `deadline` expires. Stall completions surface as
+    /// `XhciError::Stalled` via `completion_to_error` (no automatic
+    /// recovery); other nonzero codes become `TransferFailed(code)`;
+    /// expiry returns `Timeout`. The clock is consulted every iteration.
+    pub(crate) fn wait_transfer(
+        &mut self,
+        ptr: u64,
+        slot: u8,
+        dci: u8,
+        deadline: Deadline,
+        clock: &impl Clock,
+    ) -> Result<(), XhciError> {
+        loop {
+            let mut iter = 0usize;
+            while iter < EVT_RING_TRBS {
+                let trb = read_event_trb(self.evt_phys, self.evt_dequeue)?;
+                if trb[12] & 0x01 != self.evt_cycle as u8 {
+                    break;
+                }
+                let control = u32::from_le_bytes([trb[12], trb[13], trb[14], trb[15]]);
+                let trb_type = (control >> 10) & 0x3F;
+                match trb_type {
+                    32 => {
+                        let event = relay_core::xhci::decode_transfer_event(&trb)?;
+                        self.advance_event(1)?;
+                        if event.pointer == ptr {
+                            if event.slot != slot || event.endpoint != dci {
+                                return Err(XhciError::InvalidSlot);
+                            }
+                            relay_core::xhci::completion_to_error(event.code)?;
+                            return Ok(());
+                        }
+                    }
+                    33 | 34 => {
+                        // Command completions and port-change events are
+                        // consumed but never delivered to a transfer waiter.
+                        self.advance_event(1)?;
+                    }
+                    _ => {
+                        self.advance_event(1)?;
+                        return Err(XhciError::UnsupportedEvent);
+                    }
+                }
+                if clock.now_ticks() >= deadline.0 {
+                    return Err(XhciError::Timeout);
+                }
+                iter += 1;
+            }
+            if clock.now_ticks() >= deadline.0 {
+                return Err(XhciError::Timeout);
+            }
+        }
+    }
+
+    /// Enqueues a command TRB on the command ring with the current
+    /// producer cycle and returns its device physical address for
+    /// `wait_command` correlation. The single-segment ring never wraps
+    /// in Task 4 (fewer than 63 commands); a full ring is an error.
+    pub(crate) fn submit_command(&mut self, mut trb: [u8; 16]) -> Result<u64, XhciError> {
+        if self.cmd_enqueue >= CMD_RING_TRBS - 1 {
+            return Err(XhciError::Allocation);
+        }
+        trb[12] = (trb[12] & 0xFE) | (self.cmd_cycle as u8);
+        let byte_off = (self.cmd_enqueue as u64)
+            .checked_mul(TRB_BYTES)
+            .ok_or(XhciError::InvalidRegister)?;
+        let phys = self
+            .cmd_phys
+            .checked_add(byte_off)
+            .ok_or(XhciError::InvalidRegister)?;
+        write_dma_bytes(phys, 0, &trb)?;
+        // Publish the TRB to the controller before the caller rings the
+        // command doorbell (store-store ordering, see `dma_write_fence`).
+        crate::arch::x86_64::memory::dma_write_fence();
+        self.cmd_enqueue += 1;
+        Ok(phys)
+    }
+
+    /// Programs ERSTSZ/ERDP/ERSTBA from the stored ring addresses. This
+    /// runs immediately before the first doorbell rather than at init:
+    /// programming the event ring early leaves it uncached (first
+    /// command's completion never arrives, HCE asserts), while the same
+    /// values programmed late cache reliably and completions flow. The
+    /// table itself is written at init; only the register publish is
+    /// deferred. Safe to call once the controller is running and no
+    /// events are outstanding.
+    pub(crate) fn program_event_ring(&mut self) -> Result<(), XhciError> {
+        let erstsz_off = self
+            .rt_base
+            .checked_add(relay_core::xhci::RT_ERSTSZ)
+            .ok_or(XhciError::InvalidRegister)?;
+        let erstba_off = self
+            .rt_base
+            .checked_add(relay_core::xhci::RT_ERSTBA)
+            .ok_or(XhciError::InvalidRegister)?;
+        let erdp_off = self
+            .rt_base
+            .checked_add(relay_core::xhci::RT_ERDP)
+            .ok_or(XhciError::InvalidRegister)?;
+        crate::arch::x86_64::memory::dma_write_fence();
+        self.mmio.write32(erstsz_off, 1)?;
+        write64(&mut self.mmio, erdp_off, self.evt_phys)?;
+        write64(&mut self.mmio, erstba_off, self.erst_phys)?;
+        Ok(())
+    }
+
+    /// Reads the PORTSC register for a 1-based root-hub port.
+    pub(crate) fn read_portsc(&self, port: u8) -> Result<u32, XhciError> {
+        let offset = super::port::portsc_offset(self.op_base, port)?;
+        self.mmio.read32(offset)
+    }
+
+    /// Writes the PORTSC register for a 1-based root-hub port. Callers
+    /// pass a read-modify-write value; writing 1 to change bits clears
+    /// them per the xHCI rules.
+    pub(crate) fn write_portsc(&mut self, port: u8, value: u32) -> Result<(), XhciError> {
+        let offset = super::port::portsc_offset(self.op_base, port)?;
+        self.mmio.write32(offset, value)
     }
 
     fn advance_event(&mut self, count: usize) -> Result<(), XhciError> {
@@ -515,8 +630,8 @@ impl XhciController {
         self.scratchpad_count
     }
 
-    // Task 4 needs the DMA phys for slot bring-up; allow dead until then.
-    #[allow(dead_code)]
+    /// DCBAA device address for Task 4 slot bring-up (slot entries live
+    /// at `dcbaa_phys + slot * 8`).
     pub fn dcbaa_phys(&self) -> u64 {
         self.dcbaa_phys
     }
@@ -642,7 +757,7 @@ fn read_event_trb(evt_phys: u64, index: usize) -> Result<[u8; 16], XhciError> {
     Ok(unsafe { (virt as *const [u8; 16]).read_volatile() })
 }
 
-fn xhci_status(error: &XhciError) -> &'static str {
+pub(crate) fn xhci_status(error: &XhciError) -> &'static str {
     match error {
         XhciError::UnsupportedPlatform => "unsupported-platform",
         XhciError::UnsupportedEvent => "unsupported-event",
@@ -659,40 +774,87 @@ fn xhci_status(error: &XhciError) -> &'static str {
     }
 }
 
+/// Outcome of the default-pipe control probe: `Eight` means the 8-byte
+/// GET_DESCRIPTOR read succeeded, `None` means no root-hub port was
+/// connected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlProbe {
+    Eight,
+    None,
+}
+
+impl ControlProbe {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ControlProbe::Eight => "8",
+            ControlProbe::None => "none",
+        }
+    }
+}
+
+/// Values collected by the Task 4 probe for the `xhci-probe` marker line.
+pub struct ProbeReport {
+    pub slots_en: u8,
+    pub ports: u8,
+    pub ctx64: u8,
+    pub scratch: u16,
+    pub max_slots: u8,
+    pub control_probe: ControlProbe,
+}
+
 /// Builds the TSC clock and Task 11 DMA allocator, initializes the primary
-/// controller, and prints the stable `xhci-probe` marker. Halts on error.
-pub fn probe_and_report(platform: &crate::pci::PlatformInfo) {
+/// controller, then probes the first connected root-hub port with a port
+/// reset, EnableSlot, AddressDevice, and a default-pipe 8-byte
+/// GET_DESCRIPTOR control read. Returns the values for the `xhci-probe`
+/// marker line; the caller prints the line and halts on error. All DMA is
+/// leak-only, so the hardware keeps running after this function returns.
+pub fn probe_and_collect(platform: &crate::pci::PlatformInfo) -> Result<ProbeReport, XhciError> {
     let clock = crate::arch::x86_64::clock::TscClock::calibrate();
     let mut dma = crate::arch::x86_64::dma::allocator();
     let pci = XhciPciDevice {
         address: platform.xhci,
         bar: platform.bar,
     };
-    match XhciController::initialize(pci, platform.caps, &mut dma, &clock) {
-        Ok(controller) => {
-            let line = alloc::format!(
-                "[relay] phase=xhci-probe status=ok slots_en={} ports={} ctx64={} addr64=1 scratch={} control_probe=none xecp={:#x} max_slots={}\n",
-                controller.max_slots_en(),
-                controller.max_ports(),
-                controller.caps().context_64 as u8,
-                controller.scratchpad_count(),
-                platform.xecp,
-                controller.caps().max_slots,
-            );
-            crate::console::write(line.as_bytes());
-            // Leak-only DMA keeps the controller alive in hardware; the struct
-            // drops here and Task 4 extends this probe with port and
-            // control-transfer diagnostics.
-            let _ = controller;
-        }
-        Err(error) => {
-            let line = alloc::format!(
-                "[relay] phase=xhci-probe status={} detail={:?}\n",
-                xhci_status(&error),
-                error,
-            );
-            crate::console::write(line.as_bytes());
-            crate::arch::x86_64::halt();
-        }
-    }
+    let mut controller = XhciController::initialize(pci, platform.caps, &mut dma, &clock)?;
+    let mut report = ProbeReport {
+        slots_en: controller.max_slots_en(),
+        ports: controller.max_ports(),
+        ctx64: controller.caps().context_64 as u8,
+        scratch: controller.scratchpad_count(),
+        max_slots: controller.caps().max_slots,
+        control_probe: ControlProbe::None,
+    };
+    // A full 256-entry buffer always fits `max_ports <= 255`, so an
+    // `Allocation` error here is impossible; `NoPorts` means no device is
+    // connected and the probe correctly reports `control_probe=none`.
+    let mut connected = [0u8; 256];
+    match controller.connected_root_ports(&mut connected) {
+        Ok(_) => {}
+        Err(XhciError::NoPorts) => return Ok(report),
+        Err(other) => return Err(other),
+    };
+    // First connected port, not hardcoded port 1: QEMU numbers USB3 ports
+    // first, so a full-speed keyboard lands on a USB2 port (3 or 4).
+    // `connected_root_ports` guarantees at least one entry on success.
+    let port = connected[0];
+    let mut device = controller.reset_and_address(port, &mut dma, &clock)?;
+    let desc_alloc = alloc_dma(&mut dma, 64, 64)?;
+    let desc = crate::arch::x86_64::memory::direct_slice_mut(desc_alloc.device_address, 8)
+        .ok_or(XhciError::InvalidRegister)?;
+    let data = relay_core::xhci::ControlData::new(
+        relay_core::xhci::ControlDirection::In,
+        desc,
+        &desc_alloc,
+    )?;
+    controller.control(
+        &mut device,
+        super::transfer::GET_DESCRIPTOR_8,
+        Some(data),
+        &clock,
+    )?;
+    // Leak-only DMA keeps the controller alive in hardware; the structs
+    // drop here and the caller prints the collected marker line.
+    let _ = (desc_alloc, device, controller);
+    report.control_probe = ControlProbe::Eight;
+    Ok(report)
 }

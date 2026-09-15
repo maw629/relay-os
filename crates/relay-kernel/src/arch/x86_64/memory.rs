@@ -117,6 +117,20 @@ pub fn allocate_frame() -> Option<u64> {
     unsafe { (*FRAME_ALLOCATOR.0.get()).as_mut()?.allocate_frame() }
 }
 
+/// Orders prior DMA descriptor stores before later MMIO doorbell writes.
+///
+/// x86 does not order WB (DRAM descriptor) stores against UC (MMIO)
+/// stores, so without a fence the xHC can DMA-read stale zeros from a
+/// table the CPU just wrote (observed: QEMU's event-ring reset read a
+/// zeroed ERST entry despite a correct guest-side write, which disabled
+/// the event ring and faulted the first command with HCE). SFENCE gives
+/// the required store-store ordering.
+pub fn dma_write_fence() {
+    // SAFETY: SFENCE is unprivileged, takes no operands, touches no
+    // memory itself, and only orders the calling core's stores.
+    unsafe { core::arch::asm!("sfence", options(nostack, preserves_flags)) }
+}
+
 /// Bounds-checked direct-map slice for DMA fills and table access.
 /// Returns None instead of faulting on out-of-range requests.
 pub fn direct_slice_mut(physical: u64, len: usize) -> Option<&'static mut [u8]> {
