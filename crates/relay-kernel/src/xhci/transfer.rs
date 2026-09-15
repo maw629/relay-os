@@ -158,6 +158,7 @@ impl XhciController {
         // write at init has settled and the controller is running, so
         // the cache pass observes the published table (see
         // `program_event_ring`).
+        // TODO(Task13): re-validate ERST publish order on NUC (late placement is load-bearing on QEMU).
         self.program_event_ring()?;
 
         let enable = relay_core::xhci::encode_enable_slot(0);
@@ -216,6 +217,7 @@ impl XhciController {
         };
         let desc_alloc = alloc_dma(dma, 64, 64)?;
         let reported = {
+            // NOTE: reset learns EP0 size internally; probe re-reads 8B for the marker (harmless, one extra control transfer).
             let desc =
                 direct_slice_mut(desc_alloc.device_address, 8).ok_or(XhciError::InvalidRegister)?;
             let data = ControlData::new(ControlDirection::In, desc, &desc_alloc)?;
@@ -527,6 +529,8 @@ fn write_slot_context(
     entries: u8,
     _is_64: bool,
 ) -> Result<(), XhciError> {
+    debug_assert!(!_is_64, "64-byte contexts need NUC verification (Task 13)");
+    // TODO(Task13): verify 64-byte layout on NUC (QEMU ctx64=0 only).
     let dword0 = u32::from(entries & 0x1F)
         .checked_shl(27)
         .ok_or(XhciError::InvalidRegister)?
@@ -573,6 +577,8 @@ fn write_ep_context(
     esit_payload_lo: u16,
     _is_64: bool,
 ) -> Result<(), XhciError> {
+    debug_assert!(!_is_64, "64-byte contexts need NUC verification (Task 13)");
+    // TODO(Task13): verify 64-byte layout on NUC (QEMU ctx64=0 only).
     let dword0 = u32::from(interval)
         .checked_shl(16)
         .ok_or(XhciError::InvalidRegister)?;

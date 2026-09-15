@@ -19,7 +19,7 @@ pub fn portsc_offset(op_base: u32, port: u8) -> Result<u32, XhciError> {
         .checked_mul(relay_core::xhci::OP_PORT_STRIDE)
         .and_then(|stride| relay_core::xhci::OP_PORT_BASE.checked_add(stride))
         .and_then(|base| base.checked_add(0))
-        .map(|relative| op_base.saturating_add(relative))
+        .and_then(|relative| op_base.checked_add(relative))
         .filter(|_| index < 255)
         .ok_or(XhciError::NoPorts)
 }

@@ -1,3 +1,4 @@
+// TODO(Task13): unify host cycle model with HW byte-12 (currently byte-15; kernel translates at boundary) and consider cfg(test)-gating *_for_test helpers.
 use super::XhciError;
 use alloc::vec::Vec;
 
@@ -37,7 +38,14 @@ impl Ring {
             self.producer_cycle = !self.producer_cycle;
         }
         trb[15] = (trb[15] & 0xFE) | (self.producer_cycle as u8);
-        let phys = self.base + self.enqueue as u64 * 16;
+        let phys = self
+            .base
+            .checked_add(
+                (self.enqueue as u64)
+                    .checked_mul(16)
+                    .ok_or(XhciError::Allocation)?,
+            )
+            .ok_or(XhciError::Allocation)?;
         self.entries[self.enqueue] = trb;
         self.enqueue += 1;
         self.live += 1;
@@ -73,6 +81,7 @@ impl Ring {
             self.enqueue = 0;
             self.producer_cycle = !self.producer_cycle;
         }
+        // Test-only reset; production wrap toggles cycle on Link (see push).
         if self.live <= 1 {
             self.enqueue = 0;
             self.producer_cycle = false;
@@ -93,7 +102,10 @@ impl Ring {
     }
 
     pub fn dequeue_phys_for_test(&self) -> u64 {
-        self.base + self.dequeue as u64 * 16
+        (self.dequeue as u64)
+            .checked_mul(16)
+            .and_then(|off| self.base.checked_add(off))
+            .expect("ring phys overflow (XhciError::Allocation)")
     }
 
     pub fn advance_for_test(&mut self) {

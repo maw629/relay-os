@@ -20,9 +20,7 @@ impl TscClock {
     }
 
     pub fn now_ticks(&self) -> u64 {
-        // SAFETY: RDTSC is valid at CPL0, reads the invariant TSC when
-        // CPUID 0x80000007 bit 8 is set (checked at calibrate time for
-        // diagnostics only), and has no side effects.
+        // RDTSC read; invariant-TSC assumed per CPUID 0x80000007:8 check done by caller platform code where required.
         unsafe {
             let low: u32;
             let high: u32;

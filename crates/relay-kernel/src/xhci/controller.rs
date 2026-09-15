@@ -312,6 +312,7 @@ impl XhciController {
         }
         if consumed == EVT_RING_TRBS {
             // 64 matched without an empty entry: check one more for overrun.
+            // Design §Ring: >64 ready entries without empty = overrun, never silent.
             let trb = read_event_trb(self.evt_phys, dequeue)?;
             if trb[12] & 0x01 == cycle as u8 {
                 return Err(XhciError::TransferFailed(0));
@@ -758,6 +759,7 @@ fn read_event_trb(evt_phys: u64, index: usize) -> Result<[u8; 16], XhciError> {
 }
 
 pub(crate) fn xhci_status(error: &XhciError) -> &'static str {
+    // NOTE: Timeout/Stalled capitalized; qemu_xhci gate greps them.
     match error {
         XhciError::UnsupportedPlatform => "unsupported-platform",
         XhciError::UnsupportedEvent => "unsupported-event",
@@ -838,6 +840,7 @@ pub fn probe_and_collect(platform: &crate::pci::PlatformInfo) -> Result<ProbeRep
     // `connected_root_ports` guarantees at least one entry on success.
     let port = connected[0];
     let mut device = controller.reset_and_address(port, &mut dma, &clock)?;
+    // NOTE: reset learns EP0 size internally; probe re-reads 8B for the marker (harmless, one extra control transfer).
     let desc_alloc = alloc_dma(&mut dma, 64, 64)?;
     let desc = crate::arch::x86_64::memory::direct_slice_mut(desc_alloc.device_address, 8)
         .ok_or(XhciError::InvalidRegister)?;

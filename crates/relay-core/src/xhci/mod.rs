@@ -220,6 +220,7 @@ pub fn encode_data_stage(phys: u64, len: usize, dir_in: bool, chain: bool) -> [u
 pub fn encode_status_stage(dir_in: bool, cycle: u8) -> [u8; 16] {
     let mut trb = [0; 16];
     let status = if dir_in { 0 } else { 1 << 16 };
+    // NOTE: sets CHAIN by default; callers clear it for terminal Status with IOC (Task 1 test pins this).
     let control = trb_control(4, cycle) | (1 << 4);
     put_trb(&mut trb, 0, status, control);
     trb
