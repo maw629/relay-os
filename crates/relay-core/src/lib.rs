@@ -17,3 +17,4 @@ pub mod mmio;
 pub mod pci;
 pub mod shell;
 pub mod vfs;
+pub mod xhci;

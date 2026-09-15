@@ -48,7 +48,7 @@ fn verify_image(mut args: impl Iterator<Item = String>) {
 
 fn qemu(mut args: impl Iterator<Item = String>) {
     let Some(action) = args.next() else {
-        unavailable("qemu requires `boot IMAGE --display none --accel tcg`");
+        unavailable("qemu requires `boot|xhci IMAGE --display none --accel tcg`");
     };
     let Some(image) = args.next() else {
         unavailable("qemu boot requires IMAGE");
@@ -65,12 +65,16 @@ fn qemu(mut args: impl Iterator<Item = String>) {
     let Some(accel) = args.next() else {
         unavailable("qemu boot requires `--display none --accel tcg`");
     };
-    if action != "boot"
+    if (action != "boot" && action != "xhci")
         || display_flag != "--display"
         || accel_flag != "--accel"
         || args.next().is_some()
     {
-        unavailable("qemu requires exactly `boot IMAGE --display none --accel tcg`");
+        unavailable("qemu requires exactly `boot|xhci IMAGE --display none --accel tcg`");
+    }
+    if action == "xhci" {
+        qemu_xhci(&image, &display, &accel);
+        return;
     }
     let mut run = match relay_xtask::qemu::QemuRun::boot(
         std::path::Path::new(&image),
@@ -86,6 +90,32 @@ fn qemu(mut args: impl Iterator<Item = String>) {
     };
     if let Err(error) = run.wait_for_marker(relay_xtask::qemu::KERNEL_ENTRY_MARKER) {
         eprintln!("cargo xtask qemu boot: {error}");
+        eprintln!("{}", run.serial_log());
+        std::process::exit(1);
+    }
+    print!("{}", run.serial_log());
+}
+
+fn qemu_xhci(image: &str, display: &str, accel: &str) {
+    let mut run = match relay_xtask::qemu::QemuRun::xhci(
+        std::path::Path::new(image),
+        display,
+        accel,
+        std::time::Duration::from_secs(30),
+    ) {
+        Ok(run) => run,
+        Err(error) => {
+            eprintln!("cargo xtask qemu xhci: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = run.wait_for_marker(relay_xtask::qemu::XHCI_PROBE_MARKER) {
+        eprintln!("cargo xtask qemu xhci: {error}");
+        eprintln!("{}", run.serial_log());
+        std::process::exit(1);
+    }
+    if let Err(error) = run.wait_for_marker("control_probe=8") {
+        eprintln!("cargo xtask qemu xhci: {error}");
         eprintln!("{}", run.serial_log());
         std::process::exit(1);
     }

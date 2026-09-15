@@ -93,6 +93,30 @@ pub unsafe fn enter(info: *const BootInfo) -> ! {
                 xhci_all,
             );
             crate::console::write(line.as_bytes());
+            match crate::xhci::controller::probe_and_collect(&platform) {
+                Ok(probe) => {
+                    let line = alloc::format!(
+                        "[relay] phase=xhci-probe status=ok slots_en={} ports={} ctx64={} addr64=1 scratch={} control_probe={} xecp={:#x} max_slots={}\n",
+                        probe.slots_en,
+                        probe.ports,
+                        probe.ctx64,
+                        probe.scratch,
+                        probe.control_probe.as_str(),
+                        platform.xecp,
+                        probe.max_slots,
+                    );
+                    crate::console::write(line.as_bytes());
+                }
+                Err(error) => {
+                    let line = alloc::format!(
+                        "[relay] phase=xhci-probe status={} detail={:?}\n",
+                        crate::xhci::controller::xhci_status(&error),
+                        error,
+                    );
+                    crate::console::write(line.as_bytes());
+                    crate::arch::x86_64::halt();
+                }
+            }
         }
         Err(error) => {
             let line = alloc::format!(

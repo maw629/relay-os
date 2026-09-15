@@ -12,6 +12,7 @@ use ovmf_prebuilt::{Arch, FileType, Prebuilt, Source};
 use crate::qmp;
 
 pub const KERNEL_ENTRY_MARKER: &str = "[relay] phase=kernel-entry status=ok";
+pub const XHCI_PROBE_MARKER: &str = "[relay] phase=xhci-probe status=ok";
 
 pub struct QemuRun {
     child: Child,
@@ -34,6 +35,29 @@ impl QemuRun {
         display: &str,
         accel: &str,
         timeout: Duration,
+    ) -> Result<Self, String> {
+        Self::boot_inner(image, display, accel, timeout, &[])
+    }
+
+    /// Boots `image` with a USB keyboard attached to the emulated xHCI
+    /// controller so the kernel's default-pipe GET_DESCRIPTOR probe has a
+    /// connected port to enumerate. Without an attached device every port
+    /// reports CCS clear and the probe can only print `control_probe=none`.
+    pub fn xhci(
+        image: &Path,
+        display: &str,
+        accel: &str,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        Self::boot_inner(image, display, accel, timeout, &["-device", "usb-kbd"])
+    }
+
+    fn boot_inner(
+        image: &Path,
+        display: &str,
+        accel: &str,
+        timeout: Duration,
+        extra_devices: &[&str],
     ) -> Result<Self, String> {
         if !image.is_file() {
             return Err(format!("image does not exist: {}", image.display()));
@@ -68,11 +92,9 @@ impl QemuRun {
         let image_argument = format!("format=raw,file={}", image.display());
         let serial_argument = format!("file:{}", serial.display());
         let child = Command::new("qemu-system-x86_64")
+            .args(["-machine", "q35", "-device", "qemu-xhci,p2=2,p3=2"])
+            .args(extra_devices)
             .args([
-                "-machine",
-                "q35",
-                "-device",
-                "qemu-xhci,p2=2,p3=2",
                 "-accel",
                 accel,
                 "-display",
