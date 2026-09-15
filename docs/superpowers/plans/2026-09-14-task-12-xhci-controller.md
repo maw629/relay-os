@@ -250,6 +250,7 @@ pub trait Mmio {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsbSpeed {
     Full = 1,
+    Low = 2,
     High = 3,
     Super = 4,
     SuperPlus = 5,
@@ -259,10 +260,21 @@ impl UsbSpeed {
     pub fn from_portsc(value: u32) -> Result<Self, XhciError> {
         match (value >> 10) & 0xF {
             1 => Ok(UsbSpeed::Full),
+            2 => Ok(UsbSpeed::Low),
             3 => Ok(UsbSpeed::High),
             4 => Ok(UsbSpeed::Super),
             5 => Ok(UsbSpeed::SuperPlus),
             _ => Err(XhciError::UnsupportedPlatform),
+        }
+    }
+
+    /// Initial EP0 max-packet size: low/full-speed start at 8 bytes,
+    /// high-speed at 64, SuperSpeed(Plus) at 512.
+    pub fn ep0_initial_max_packet(self) -> u16 {
+        match self {
+            UsbSpeed::Full | UsbSpeed::Low => 8,
+            UsbSpeed::High => 64,
+            UsbSpeed::Super | UsbSpeed::SuperPlus => 512,
         }
     }
 }

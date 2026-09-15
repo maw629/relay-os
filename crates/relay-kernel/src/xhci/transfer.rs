@@ -152,7 +152,7 @@ impl XhciController {
         let portsc = self.read_portsc(port)?;
         let speed_raw = ((portsc >> 10) & 0xF) as u8;
         let speed = UsbSpeed::from_portsc(portsc)?;
-        let initial_packet = initial_max_packet(speed)?;
+        let initial_packet = speed.ep0_initial_max_packet();
 
         // Program the event ring now that the port is reset: the table
         // write at init has settled and the controller is running, so
@@ -631,14 +631,6 @@ fn encode_evaluate_context(input_phys: u64, slot: u8) -> [u8; 16] {
     let control = (TRB_TYPE_EVALUATE_CONTEXT << 10) | ((u32::from(slot)) << 24);
     trb[12..16].copy_from_slice(&control.to_le_bytes());
     trb
-}
-
-fn initial_max_packet(speed: UsbSpeed) -> Result<u16, XhciError> {
-    match speed {
-        UsbSpeed::Full => Ok(8),
-        UsbSpeed::High => Ok(64),
-        UsbSpeed::Super | UsbSpeed::SuperPlus => Ok(512),
-    }
 }
 
 fn xhci_ep_type(transfer_type: u8, dir_in: bool) -> Result<u8, XhciError> {

@@ -92,7 +92,7 @@ pub trait Mmio {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UsbSpeed { Full = 1, High = 3, Super = 4, SuperPlus = 5 }
+pub enum UsbSpeed { Full = 1, Low = 2, High = 3, Super = 4, SuperPlus = 5 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceHandle { pub slot_id: u8, pub root_port: u8, pub speed: UsbSpeed }

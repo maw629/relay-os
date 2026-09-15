@@ -1,8 +1,38 @@
 use relay_core::xhci::{
-    ControlData, XhciError, decode_cmd_complete, decode_port_change, decode_transfer_event,
-    encode_address_device, encode_config_ep, encode_data_stage, encode_enable_slot, encode_link,
-    encode_noop_cmd, encode_normal, encode_reset_ep, encode_setup_stage, encode_status_stage,
+    ControlData, UsbSpeed, XhciError, decode_cmd_complete, decode_port_change,
+    decode_transfer_event, encode_address_device, encode_config_ep, encode_data_stage,
+    encode_enable_slot, encode_link, encode_noop_cmd, encode_normal, encode_reset_ep,
+    encode_setup_stage, encode_status_stage,
 };
+
+#[test]
+fn portsc_speed_decodes_all_valid_psivs_including_low() {
+    let cases = [
+        (1u32, UsbSpeed::Full),
+        (2u32, UsbSpeed::Low),
+        (3u32, UsbSpeed::High),
+        (4u32, UsbSpeed::Super),
+        (5u32, UsbSpeed::SuperPlus),
+    ];
+    for (psiv, expected) in cases {
+        assert_eq!(UsbSpeed::from_portsc(psiv << 10), Ok(expected));
+    }
+    for psiv in [0u32, 6, 7, 8, 15] {
+        assert_eq!(
+            UsbSpeed::from_portsc(psiv << 10),
+            Err(XhciError::UnsupportedPlatform)
+        );
+    }
+}
+
+#[test]
+fn ep0_initial_packet_size_covers_low_speed_at_8_bytes() {
+    assert_eq!(UsbSpeed::Low.ep0_initial_max_packet(), 8);
+    assert_eq!(UsbSpeed::Full.ep0_initial_max_packet(), 8);
+    assert_eq!(UsbSpeed::High.ep0_initial_max_packet(), 64);
+    assert_eq!(UsbSpeed::Super.ep0_initial_max_packet(), 512);
+    assert_eq!(UsbSpeed::SuperPlus.ep0_initial_max_packet(), 512);
+}
 
 #[test]
 fn setup_stage_carries_setup_bytes_and_type() {
